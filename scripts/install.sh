@@ -18,6 +18,17 @@ echo "✓ skill -> $SKILL_DST"
 rsync -a --delete "$PLUGIN_SRC/" "$PLUGIN_DST/"
 echo "✓ plugin -> $PLUGIN_DST"
 
+# Fork-store mode: if the user has no config, point every project's memory at
+# <repo>/memory/<slug> so this repo checkout becomes their version-controlled
+# memory store. Never overwrites an existing config.
+mkdir -p "$REPO_DIR/memory"
+if [ ! -f "$PLUGIN_DST/config.json" ]; then
+  printf '{\n  "baseDir": "%s/memory"\n}\n' "$REPO_DIR" > "$PLUGIN_DST/config.json"
+  echo "✓ created $PLUGIN_DST/config.json (fork-store mode: $REPO_DIR/memory is your memory store)"
+else
+  echo "✓ existing config.json left untouched"
+fi
+
 # Register the plugin in opencode.json (creates the file if missing).
 python3 - "$OC_JSON" "$PLUGIN_DST" <<'PY'
 import json, sys, os

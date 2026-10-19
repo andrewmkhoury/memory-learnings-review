@@ -25,12 +25,14 @@ mkdirSync(memB, { recursive: true })
 writeFileSync(path.join(memA, "MEMORY.md"), "# Memory index\n\n## Environment-Specific Context\n")
 writeFileSync(path.join(memB, "MEMORY.md"), "# Memory index\n\n## Environment-Specific Context\n")
 writeFileSync(path.join(memB, "30-shared.md"), "- older entry\n")
+const baseDir = path.join(HOME, "memory-store")
 writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({
   memoryDirs: [
     { prefix: projA, dir: "~/.claude/projects/-sandbox-code-alpha/memory" },
     { prefix: projB, dir: "~/.claude/projects/-sandbox-code-beta/memory" },
     { prefix: "not-a-string-dir" }, // invalid entry: must be filtered
   ],
+  baseDir, // unmapped directories fall back to <baseDir>/<slug> (fork-store mode)
 }))
 
 // --- mock OpenCode host ------------------------------------------------------
@@ -93,16 +95,16 @@ await promptHandlers[0](event1b)
 assert.equal(event1b.prompt.files, undefined, "index attached only once per session")
 console.log("PASS 5: recall attaches index once per session")
 
-// 6. recall: unmapped directory falls back to the Claude Code slug convention
+// 6. recall: unmapped directory falls back to <baseDir>/<slug> (fork-store mode)
 const stray = path.join(HOME, "scratch", "gamma")
-const expectedStrayMem = path.join(HOME, ".claude", "projects", stray.replace(/\//g, "-"), "memory")
+const expectedStrayMem = path.join(baseDir, stray.replace(/\//g, "-"))
 mkdirSync(expectedStrayMem, { recursive: true })
 writeFileSync(path.join(expectedStrayMem, "MEMORY.md"), "# Memory index\n")
 sessions.set("s2", { location: { directory: stray } })
 const event2 = { sessionID: "s2", prompt: {} }
 await promptHandlers[0](event2)
 assert.deepEqual(event2.prompt.files.map((f) => f.uri), [`file://${path.join(expectedStrayMem, "MEMORY.md")}`])
-console.log("PASS 6: unmapped directory resolves via slug convention")
+console.log("PASS 6: unmapped directory resolves to <baseDir>/<slug>")
 
 // 7. write path: unmapped directory also works (per-project memory anywhere)
 out = await note.execute({ file: "10-rules.md", note: "stray dir note" }, { cwd: stray })

@@ -42,10 +42,17 @@ dependencies) that provides recall and the write path:
 - It registers the `memory_note` tool: validates the note (one bullet,
   ≤500 chars), appends it idempotently to the topic file, syncs sibling
   configured projects, and indexes new topic files in `MEMORY.md`.
-- Project → memory-dir resolution is automatic (slug convention above).
-  Optional explicit mappings live in
-  `~/.config/opencode/plugins/memory-inject/config.json` (see
-  `config.example.json`); `~` is expanded. The config path can be
+- Project → memory-dir resolution, in priority order:
+  1. explicit `memoryDirs` mappings (used to point several checkouts of the
+     same project at one shared memory directory, so topic files stay in
+     sync across them);
+  2. if `baseDir` is set, `<baseDir>/<slug>` — **fork-store mode**, where
+     this repo's `memory/` directory is the user's memory store;
+  3. the Claude Code slug convention.
+
+  Config lives at `~/.config/opencode/plugins/memory-inject/config.json`
+  (see `config.example.json`); `~` is expanded. `install.sh` creates it for
+  you in fork-store mode when none exists. The config path can be
   overridden with the `MEMORY_INJECT_CONFIG` environment variable.
 
 The plugin's behavior (write, index, sync, dedup, validation, recall,
@@ -124,6 +131,25 @@ store lives somewhere unusual.
 
 No runtime, no API, no network — just markdown on disk.
 
+## Using it as your own memory repo (the intended fork workflow)
+
+Fork this repo and your fork becomes both the code and your memory store:
+
+1. `git clone <your-fork>` (e.g. `~/Source/memory-learnings-review`).
+2. `./scripts/install.sh` — installs the skill and plugin, and (if you have
+   no config) writes one that sets `baseDir` to `<fork>/memory`.
+3. From then on, every project's memory lives under
+   `<fork>/memory/<project-slug>/` — plain markdown, version-controlled
+   with your fork.
+4. `./scripts/memory-push.sh` — commits and pushes `memory/` after a
+   session (or put it on a cron/launchd job so it happens on its own).
+5. New machine: clone your fork, run `install.sh` — your memory comes back
+   with the checkout.
+
+Optional: for several checkouts of the same project, add `memoryDirs`
+mappings pointing them at one shared directory so lessons stay in sync
+(see `config.example.json`).
+
 ### Keeping it up to date
 
 - `scripts/install.sh` — install/upgrade on any machine from a checkout
@@ -138,7 +164,8 @@ No runtime, no API, no network — just markdown on disk.
 - `skills/memory-learnings-review/SKILL.md` — the curation skill.
 - `plugins/memory-inject/` — the recall + `memory_note` OpenCode plugin and
   a `config.example.json`.
-- `scripts/` — `install.sh` (install/upgrade on a machine) and
-  `sync-live.sh` (publish the author's live install).
+- `memory/` — the fork's memory store (per-project slug directories).
+- `scripts/` — `install.sh` (install/upgrade), `memory-push.sh`
+  (commit + push `memory/`), `sync-live.sh` (author-only publishing).
 - `test/harness.mjs` — behavioral tests for the plugin.
 - `README.md` — this file.

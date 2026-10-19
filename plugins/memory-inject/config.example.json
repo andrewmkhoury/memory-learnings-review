@@ -1,12 +1,13 @@
 {
+  "baseDir": "~/Source/memory-learnings-review/memory",
   "memoryDirs": [
     {
       "prefix": "/home/you/code/my-repo",
-      "dir": "~/.claude/projects/-home-you-code-my-repo/memory"
+      "dir": "~/Source/memory-learnings-review/memory/my-repo-shared"
     },
     {
-      "prefix": "/home/you/code/my-other-checkout",
-      "dir": "~/.claude/projects/-home-you-code-my-repo/memory"
+      "prefix": "/home/you/code/my-repo-second-checkout",
+      "dir": "~/Source/memory-learnings-review/memory/my-repo-shared"
     }
   ]
 }

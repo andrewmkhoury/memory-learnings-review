@@ -7,8 +7,11 @@ import path from "node:path"
 //
 // Each project maps to a memory directory containing MEMORY.md (the index,
 // attached once per session) and topic files (read on demand). Resolution:
-//   1. Explicit prefix -> dir mappings from config.json next to this plugin.
-//   2. Default convention (Claude Code's per-project auto-memory layout):
+//   1. Explicit prefix -> dir mappings from the config file.
+//   2. If the config sets "baseDir", every project's memory lives under
+//      <baseDir>/<slug>/ — this is how a fork of this repo can act as the
+//      user's own version-controlled memory store.
+//   3. Otherwise the Claude Code convention:
 //      <claudeHome>/projects/<slug>/memory, where <slug> is the session's
 //      absolute working directory with "/" replaced by "-".
 //
@@ -22,37 +25,44 @@ const CONFIG_FILE =
   path.join(os.homedir(), ".config/opencode/plugins/memory-inject/config.json")
 
 interface Mapping { prefix: string; dir: string }
+interface Config { memoryDirs: Mapping[]; baseDir?: string }
+
+function expand(p: string) {
+  return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p
+}
 
 function slugFor(directory: string) {
   return directory.replace(/\//g, "-")
 }
 
-async function loadMappings(): Promise<ReadonlyArray<Mapping>> {
+async function loadConfig(): Promise<Config> {
   try {
     const raw = await readFile(CONFIG_FILE, "utf8")
-    const parsed = JSON.parse(raw) as { memoryDirs?: Mapping[] }
-    const expand = (p: string) => (p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p)
-    return (parsed.memoryDirs ?? [])
+    const parsed = JSON.parse(raw) as { memoryDirs?: Mapping[]; baseDir?: string }
+    const memoryDirs = (parsed.memoryDirs ?? [])
       .filter((m) => typeof m.prefix === "string" && typeof m.dir === "string")
       .map((m) => ({ prefix: expand(m.prefix), dir: expand(m.dir) }))
+    const baseDir = typeof parsed.baseDir === "string" ? expand(parsed.baseDir) : undefined
+    return { memoryDirs, baseDir }
   } catch (error) {
     if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"))
       console.error(`[memory-inject] ignoring unreadable config ${CONFIG_FILE}:`, error)
-    return []
+    return { memoryDirs: [] }
   }
 }
 
-function matchDir(
-  directory: string | undefined,
-  mappings: ReadonlyArray<Mapping>,
-): Mapping | undefined {
+function matchDir(directory: string | undefined, cfg: Config): Mapping | undefined {
   if (!directory) return undefined
-  const explicit = mappings.find(
+  const explicit = cfg.memoryDirs.find(
     (m) => directory === m.prefix || directory.startsWith(`${m.prefix}/`),
   )
   if (explicit) return explicit
-  // Default convention: derive the Claude Code project slug.
-  return { prefix: directory, dir: path.join(CLAUDE_HOME, "projects", slugFor(directory), "memory") }
+  const slug = slugFor(directory)
+  // Fork store: <baseDir>/<slug>, else the Claude Code convention.
+  const dir = cfg.baseDir
+    ? path.join(cfg.baseDir, slug)
+    : path.join(CLAUDE_HOME, "projects", slug, "memory")
+  return { prefix: directory, dir }
 }
 
 export default {
@@ -62,7 +72,7 @@ export default {
     await ctx.session.hook("prompt", async (event: any) => {
       try {
         const session = await ctx.session.get({ sessionID: event.sessionID })
-        const match = matchDir(session?.location?.directory, await loadMappings())
+        const match = matchDir(session?.location?.directory, await loadConfig())
         const file = match && path.join(match.dir, "MEMORY.md")
         if (!file || !existsSync(file)) return
         const key = `memory-injected:${event.sessionID}`
@@ -112,8 +122,8 @@ export default {
             let directory = context?.cwd ?? context?.location?.directory
             if (!directory && sid)
               directory = (await ctx.session.get({ sessionID: sid }))?.location?.directory
-            const mappings = await loadMappings()
-            const home = matchDir(directory, mappings)
+            const cfg = await loadConfig()
+            const home = matchDir(directory, cfg)
             if (!home)
               return { content: "error: no memory directory mapped for this session's directory" }
 
@@ -125,7 +135,7 @@ export default {
             const createdPrimary = !existsSync(primary)
             const targets = [primary]
             // Explicitly configured sibling projects keep shared topic files in sync.
-            for (const m of mappings) {
+            for (const m of cfg.memoryDirs) {
               if (m.dir === home.dir) continue
               const t = path.join(m.dir, file)
               if (existsSync(t)) targets.push(t)
