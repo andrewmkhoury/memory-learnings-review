@@ -102,9 +102,16 @@ store lives somewhere unusual.
 - **Skill**: copy `skills/memory-learnings-review/` into your agent's skills
   directory (e.g. `~/.claude/skills/`).
 - **Plugin** (OpenCode): copy `plugins/memory-inject/` into
-  `~/.config/opencode/plugins/`. Optionally add a `config.json` (see
-  `config.example.json`) for explicit project → memory-dir mappings,
-  especially for sibling checkouts of the same project.
+  `~/.config/opencode/plugins/`, then register it by adding its directory
+  to the `plugins` array in `~/.config/opencode/opencode.json`:
+
+  ```json
+  { "plugins": ["/Users/<you>/.config/opencode/plugins/memory-inject"] }
+  ```
+
+  Optionally add a `config.json` (see `config.example.json`) for explicit
+  project → memory-dir mappings, especially for sibling checkouts of the
+  same project.
 
 No runtime, no API, no network — just markdown on disk.
 
