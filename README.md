@@ -45,7 +45,16 @@ dependencies) that provides recall and the write path:
 - Project → memory-dir resolution is automatic (slug convention above).
   Optional explicit mappings live in
   `~/.config/opencode/plugins/memory-inject/config.json` (see
-  `config.example.json`); `~` is expanded.
+  `config.example.json`); `~` is expanded. The config path can be
+  overridden with the `MEMORY_INJECT_CONFIG` environment variable.
+
+The plugin's behavior (write, index, sync, dedup, validation, recall,
+slug fallback) is covered by a test harness that runs the real module
+against a mock host in a sandboxed `$HOME`:
+
+```bash
+node --experimental-strip-types test/harness.mjs   # Node >= 22.6
+```
 
 ## How the skill works
 
@@ -131,4 +140,5 @@ No runtime, no API, no network — just markdown on disk.
   a `config.example.json`.
 - `scripts/` — `install.sh` (install/upgrade on a machine) and
   `sync-live.sh` (publish the author's live install).
+- `test/harness.mjs` — behavioral tests for the plugin.
 - `README.md` — this file.

@@ -15,10 +15,11 @@ import path from "node:path"
 // Import-free plugin shape: the host provides everything through ctx; no
 // runtime npm dependency.
 const CLAUDE_HOME = path.join(os.homedir(), ".claude")
-const CONFIG_FILE = path.join(
-  os.homedir(),
-  ".config/opencode/plugins/memory-inject/config.json",
-)
+// Config location; MEMORY_INJECT_CONFIG overrides (used by the test harness
+// and by anyone who keeps the plugin outside the default plugin directory).
+const CONFIG_FILE =
+  process.env.MEMORY_INJECT_CONFIG ??
+  path.join(os.homedir(), ".config/opencode/plugins/memory-inject/config.json")
 
 interface Mapping { prefix: string; dir: string }
 
@@ -34,7 +35,9 @@ async function loadMappings(): Promise<ReadonlyArray<Mapping>> {
     return (parsed.memoryDirs ?? [])
       .filter((m) => typeof m.prefix === "string" && typeof m.dir === "string")
       .map((m) => ({ prefix: expand(m.prefix), dir: expand(m.dir) }))
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"))
+      console.error(`[memory-inject] ignoring unreadable config ${CONFIG_FILE}:`, error)
     return []
   }
 }
