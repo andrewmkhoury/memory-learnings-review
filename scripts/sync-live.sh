@@ -12,6 +12,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LIVE_SKILL="$HOME/.claude/skills/memory-learnings-review"
 LIVE_PLUGIN="$HOME/.config/opencode/plugins/memory-inject"
+# The author's publishing GitHub account (the repo's owner).
+PUBLISH_ACCOUNT="andrewmkhoury"
 
 cd "$REPO_DIR"
 
@@ -54,4 +56,14 @@ if git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --other
 fi
 git add .
 git commit -m "sync: update from live install"
+
+# Push as the publishing account (the gh CLI may have several logged in).
+PREV_ACCOUNT="$(gh api user --jq .login 2>/dev/null || true)"
+if [ "$PREV_ACCOUNT" != "$PUBLISH_ACCOUNT" ]; then
+  gh auth switch -u "$PUBLISH_ACCOUNT"
+  RESTORE_ACCOUNT=1
+fi
 git push
+if [ "${RESTORE_ACCOUNT:-}" = "1" ]; then
+  gh auth switch -u "$PREV_ACCOUNT" || true
+fi
