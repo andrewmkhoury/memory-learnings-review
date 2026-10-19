@@ -1,0 +1,12 @@
+{
+  "memoryDirs": [
+    {
+      "prefix": "/home/you/code/my-repo",
+      "dir": "~/.claude/projects/-home-you-code-my-repo/memory"
+    },
+    {
+      "prefix": "/home/you/code/my-other-checkout",
+      "dir": "~/.claude/projects/-home-you-code-my-repo/memory"
+    }
+  ]
+}
