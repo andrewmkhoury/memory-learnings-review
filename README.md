@@ -115,9 +115,20 @@ store lives somewhere unusual.
 
 No runtime, no API, no network — just markdown on disk.
 
+### Keeping it up to date
+
+- `scripts/install.sh` — install/upgrade on any machine from a checkout
+  (copies the skill and plugin, registers the plugin in `opencode.json`).
+  Idempotent; run it after `git pull`.
+- `scripts/sync-live.sh` — for the author: pushes the live install into
+  this repo (skill copy with an Adobe/machine-specific scrub gate; the
+  plugin only when it matches the public version), then commits and pushes.
+
 ## Repo layout
 
 - `skills/memory-learnings-review/SKILL.md` — the curation skill.
 - `plugins/memory-inject/` — the recall + `memory_note` OpenCode plugin and
   a `config.example.json`.
+- `scripts/` — `install.sh` (install/upgrade on a machine) and
+  `sync-live.sh` (publish the author's live install).
 - `README.md` — this file.
