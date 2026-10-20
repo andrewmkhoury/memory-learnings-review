@@ -49,6 +49,11 @@ dependencies) that provides recall and the write path:
   2. if `baseDir` is set, `<baseDir>/<slug>` — **fork-store mode**, where
      this repo's `memory/` directory is the user's memory store;
   3. the Claude Code slug convention.
+- `globalDir` (optional): a cross-project store. Its `MEMORY.md` is attached
+  to **every** session, and `memory_note` with `global: true` writes there
+  instead of the project store. This repo ships the author's general rules
+  pre-seeded in `memory/global/` — editing those files (or adding to them)
+  is how you shape the defaults every session starts with.
 
   Config lives at `~/.config/opencode/plugins/memory-inject/config.json`
   (see `config.example.json`); `~` is expanded. `install.sh` creates it for
@@ -137,7 +142,11 @@ Fork this repo and your fork becomes both the code and your memory store:
 
 1. `git clone <your-fork>` (e.g. `~/Source/memory-learnings-review`).
 2. `./scripts/install.sh` — installs the skill and plugin, and (if you have
-   no config) writes one that sets `baseDir` to `<fork>/memory`.
+   no config) writes one that sets `baseDir` to `<fork>/memory` and
+   `globalDir` to the pre-seeded general rules in `<fork>/memory/global`.
+   Those rules (execution, TDD, debugging, safe live ops, reporting) are
+   injected into every session from day one — read them, prune or extend
+   them; they're yours now.
 3. From then on, every project's memory lives under
    `<fork>/memory/<project-slug>/` — plain markdown, version-controlled
    with your fork.
@@ -164,7 +173,8 @@ mappings pointing them at one shared directory so lessons stay in sync
 - `skills/memory-learnings-review/SKILL.md` — the curation skill.
 - `plugins/memory-inject/` — the recall + `memory_note` OpenCode plugin and
   a `config.example.json`.
-- `memory/` — the fork's memory store (per-project slug directories).
+- `memory/` — the fork's memory store (per-project slug directories);
+  `memory/global/` — the pre-seeded cross-project general rules.
 - `scripts/` — `install.sh` (install/upgrade), `memory-push.sh`
   (commit + push `memory/`), `sync-live.sh` (author-only publishing).
 - `test/harness.mjs` — behavioral tests for the plugin.

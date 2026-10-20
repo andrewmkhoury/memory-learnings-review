@@ -1,0 +1,8 @@
+- Keep responses concise and concrete.
+- State evidence with outcomes, not confidence language.
+- Use this reporting format:
+  - Failing evidence:
+  - Change made:
+  - Validation run:
+  - Remaining risk:
+- If a task is long-running, provide bounded progress updates proactively.

@@ -20,10 +20,16 @@ echo "✓ plugin -> $PLUGIN_DST"
 
 # Fork-store mode: if the user has no config, point every project's memory at
 # <repo>/memory/<slug> so this repo checkout becomes their version-controlled
-# memory store. Never overwrites an existing config.
+# memory store, and point globalDir at the pre-seeded general rules when the
+# repo ships them. Never overwrites an existing config.
 mkdir -p "$REPO_DIR/memory"
 if [ ! -f "$PLUGIN_DST/config.json" ]; then
-  printf '{\n  "baseDir": "%s/memory"\n}\n' "$REPO_DIR" > "$PLUGIN_DST/config.json"
+  if [ -d "$REPO_DIR/memory/global" ]; then
+    printf '{\n  "baseDir": "%s/memory",\n  "globalDir": "%s/memory/global"\n}\n' \
+      "$REPO_DIR" "$REPO_DIR" > "$PLUGIN_DST/config.json"
+  else
+    printf '{\n  "baseDir": "%s/memory"\n}\n' "$REPO_DIR" > "$PLUGIN_DST/config.json"
+  fi
   echo "✓ created $PLUGIN_DST/config.json (fork-store mode: $REPO_DIR/memory is your memory store)"
 else
   echo "✓ existing config.json left untouched"

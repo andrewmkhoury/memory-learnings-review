@@ -1,0 +1,13 @@
+- TDD is the default for behavior changes and bug fixes.
+- Use Red -> Green -> Refactor:
+  - Red: write a failing test that reproduces the reported behavior.
+  - Green: implement the smallest change that turns the test green.
+  - Refactor: improve structure while preserving green tests.
+- Never report "fixed" without explicit failing-before / passing-after evidence.
+- Before finalizing, run:
+  - targeted tests,
+  - adjacent regression tests,
+  - and, when practical, a temporary fix-removal check to confirm red returns.
+- If unit tests cannot validate real behavior, escalate to integration/e2e with user confirmation.
+- A test that is green on first run proves nothing: confirm it can fail by temporarily breaking the code (mutation check), and check it is not passing because the default equals the expected value (a config test for "false" passed only because the default was false). Singletons like node-config survive vi.resetModules; test them in a fresh process.
+- Shared test mocks that return plausible values can hide real bugs: a mock that never returned the empty string let green suites miss a regression that returned it in production. When a bug slips past green tests, add a test with a faithful fake of the real behavior and prove it red against the old code.

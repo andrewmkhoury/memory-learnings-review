@@ -1,0 +1,5 @@
+- Test against real systems and real data before proposing or shipping a fix — not theory or plausible mocks. If you can't verify, stop and ask for exactly what's needed (token, test env, access) with a one-line reason.
+- Known traps (why this rule exists):
+  - Mocked API shapes can be wrong: a "green" suite once validated the wrong response shape for an entire fix cycle (assumed `{status, body: {id}}`, actual `{total_count, elements: [...]}`).
+  - A batch API owned by another team was all-or-nothing per call — one invalid item failed every sibling; local reasoning would never have surfaced this.
+- For live-system bugs, especially in services you don't own, make real calls, capture real response shapes/error bodies, and base the fix and its tests on those. If real verification isn't possible, say so plainly and ask for what's needed — never ship a plausible-but-unverified fix with confident language.

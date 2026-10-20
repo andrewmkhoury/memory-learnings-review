@@ -1,0 +1,8 @@
+- Assume unfamiliar scripts/tools/API calls may mutate state until proven read-only.
+- Do not run mutating probes against real org/account data without explicit confirmation.
+- Prefer dry-run/read-only inspection first.
+- Ask for required IDs/keys explicitly (do not guess IDs in live calls).
+- Never fabricate or infer auth details; ask for the exact credential needed; use live tokens only when explicitly authorized.
+- Keep large logs out of direct context: redirect and grep errors/warnings first.
+- Before changing the user's live state (browser localStorage overrides, selected project, feature-flag overrides, remote data), record the original value, restore it afterwards, and say so. Don't drive a browser the user is also clicking in.
+- Never loop a mutating call on a status check that can fail silently. In zsh an unquoted URL containing ? aborts with "no matches found", so a retry loop re-sent a state transition five times. Quote URLs, gate repeats on the check actually succeeding, and use $pipestatus (not PIPESTATUS) in zsh.

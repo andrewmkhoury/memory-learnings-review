@@ -1,0 +1,12 @@
+- Debugging ladder:
+  - 1) Reproduce with executable proof.
+  - 2) Localize the smallest failing unit/condition.
+  - 3) Apply minimal fix.
+  - 4) Verify causality and regression safety.
+  - 5) Re-test original scenario end-to-end.
+- Validation ladder:
+  - unit test -> integration/e2e -> live verification.
+- Do not generalize from one failed API path to "impossible" until alternatives are tested.
+- Before concluding a fix "doesn't work", prove the code under test is the code actually running: fetch the served bundle and grep for the change, and compare stack-trace line numbers to the intended commit. (Hours have been lost testing builds that did not contain the fix — stale previews, dev overrides from another checkout, overrides that had been deleted.)
+- One user-visible symptom can have several stacked root causes. After each fix re-run the full user scenario, not just the layer you fixed, and stop only when the original symptom is gone. (One such case had five independent causes, each found only by measuring in the real browser.)
+- When a refactor swaps a data source, audit every consumer that mounts without the new source — a key that silently becomes empty can kill a feature with no error anywhere.

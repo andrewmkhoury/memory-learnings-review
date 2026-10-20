@@ -22,17 +22,21 @@ if [ ! -d "$LIVE_SKILL" ]; then
   echo "live skill not found at $LIVE_SKILL — skipping skill sync"
 else
   cp "$LIVE_SKILL/SKILL.md" "skills/memory-learnings-review/SKILL.md"
-  # Scrub machine-specific topic-file example from the routing section.
-  sed -i '' -E 's/30-genstudio-project-context\.md/30-<your-project>-context.md/' \
-    "skills/memory-learnings-review/SKILL.md"
+  # Apply the author's local scrub patterns (one sed -E pattern per line in
+  # .author-scrub, kept out of the public repo).
+  if [ -f "$REPO_DIR/.author-scrub" ]; then
+    while IFS= read -r pattern; do
+      [ -n "$pattern" ] && sed -i '' -E "$pattern" "skills/memory-learnings-review/SKILL.md"
+    done < "$REPO_DIR/.author-scrub"
+  fi
 
-  if grep -rinE 'adobe|genstudio|akhoury' --include='*.md' skills/ | grep -q .; then
-    echo "ABORT: Adobe-specific string survived the scrub in the skill:"
-    grep -rinE 'adobe|genstudio|akhoury' --include='*.md' skills/
-    git checkout -- skills/
+  if grep -rinE 'adobe|genstudio|akhoury' --include='*.md' skills/ memory/ | grep -q .; then
+    echo "ABORT: Adobe-specific string survived the scrub in skills/ or memory/:"
+    grep -rinE 'adobe|genstudio|akhoury' --include='*.md' skills/ memory/
+    git checkout -- skills/ memory/
     exit 1
   fi
-  echo "✓ skill synced and scrubbed"
+  echo "✓ skill synced and scrubbed (skills/ + memory/ gates clean)"
 fi
 
 # --- plugin ------------------------------------------------------------------

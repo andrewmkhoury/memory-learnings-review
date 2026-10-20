@@ -26,6 +26,10 @@ writeFileSync(path.join(memA, "MEMORY.md"), "# Memory index\n\n## Environment-Sp
 writeFileSync(path.join(memB, "MEMORY.md"), "# Memory index\n\n## Environment-Specific Context\n")
 writeFileSync(path.join(memB, "30-shared.md"), "- older entry\n")
 const baseDir = path.join(HOME, "memory-store")
+const globalDir = path.join(HOME, "global-memory")
+mkdirSync(globalDir, { recursive: true })
+writeFileSync(path.join(globalDir, "MEMORY.md"), "# Global memory\n\n## General rules\n")
+writeFileSync(path.join(globalDir, "10-general-execution-rules.md"), "- existing global rule\n")
 writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({
   memoryDirs: [
     { prefix: projA, dir: "~/.claude/projects/-sandbox-code-alpha/memory" },
@@ -33,6 +37,7 @@ writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({
     { prefix: "not-a-string-dir" }, // invalid entry: must be filtered
   ],
   baseDir, // unmapped directories fall back to <baseDir>/<slug> (fork-store mode)
+  globalDir, // cross-project store, injected into every session
 }))
 
 // --- mock OpenCode host ------------------------------------------------------
@@ -85,15 +90,18 @@ assert.match(out.content, /plain basename/)
 assert.equal(existsSync(path.join(memA, "..", "evil.md")), false)
 console.log("PASS 4: oversize note and path-escape basename rejected")
 
-// 5. recall: index attached once per session for mapped projects
+// 5. recall: project + global index attached once per session for mapped projects
 sessions.set("s1", { location: { directory: projA } })
 const event1 = { sessionID: "s1", prompt: {} }
 await promptHandlers[0](event1)
-assert.deepEqual(event1.prompt.files.map((f) => f.uri), [`file://${path.join(memA, "MEMORY.md")}`])
+assert.deepEqual(
+  event1.prompt.files.map((f) => f.uri),
+  [`file://${path.join(memA, "MEMORY.md")}`, `file://${path.join(globalDir, "MEMORY.md")}`],
+)
 const event1b = { sessionID: "s1", prompt: {} }
 await promptHandlers[0](event1b)
 assert.equal(event1b.prompt.files, undefined, "index attached only once per session")
-console.log("PASS 5: recall attaches index once per session")
+console.log("PASS 5: recall attaches project + global index once per session")
 
 // 6. recall: unmapped directory falls back to <baseDir>/<slug> (fork-store mode)
 const stray = path.join(HOME, "scratch", "gamma")
@@ -103,8 +111,11 @@ writeFileSync(path.join(expectedStrayMem, "MEMORY.md"), "# Memory index\n")
 sessions.set("s2", { location: { directory: stray } })
 const event2 = { sessionID: "s2", prompt: {} }
 await promptHandlers[0](event2)
-assert.deepEqual(event2.prompt.files.map((f) => f.uri), [`file://${path.join(expectedStrayMem, "MEMORY.md")}`])
-console.log("PASS 6: unmapped directory resolves to <baseDir>/<slug>")
+assert.deepEqual(
+  event2.prompt.files.map((f) => f.uri),
+  [`file://${path.join(expectedStrayMem, "MEMORY.md")}`, `file://${path.join(globalDir, "MEMORY.md")}`],
+)
+console.log("PASS 6: unmapped directory resolves to <baseDir>/<slug>, global still attached")
 
 // 7. write path: unmapped directory also works (per-project memory anywhere)
 out = await note.execute({ file: "10-rules.md", note: "stray dir note" }, { cwd: stray })
@@ -112,4 +123,28 @@ assert.match(out.content, /recorded in 10-rules.md/)
 assert.match(readFileSync(path.join(expectedStrayMem, "10-rules.md"), "utf8"), /stray dir note/)
 console.log("PASS 7: memory_note works for unmapped directories")
 
-console.log(`\nall 7 tests passed (sandbox: ${HOME})`)
+// 8. global write: new topic file lands in globalDir, indexed, not in the project store
+out = await note.execute({ file: "90-global-topic.md", note: "a cross-project rule", global: true }, { cwd: projA })
+assert.match(out.content, /recorded in 90-global-topic.md/)
+assert.match(out.content, /indexed in MEMORY.md/)
+assert.equal(readFileSync(path.join(globalDir, "90-global-topic.md"), "utf8"), "- a cross-project rule\n")
+assert.match(readFileSync(path.join(globalDir, "MEMORY.md"), "utf8"), /\[global topic\]\(90-global-topic\.md\)/)
+assert.equal(existsSync(path.join(memA, "90-global-topic.md")), false, "global note must not leak into the project store")
+console.log("PASS 8: global note written to globalDir only, indexed there")
+
+// 9. global write: appends to an existing global topic file; duplicate is a no-op
+out = await note.execute({ file: "10-general-execution-rules.md", note: "global append", global: true }, { cwd: projA })
+assert.match(out.content, /recorded in 10-general-execution-rules.md/)
+assert.match(readFileSync(path.join(globalDir, "10-general-execution-rules.md"), "utf8"), /global append/)
+out = await note.execute({ file: "90-global-topic.md", note: "a cross-project rule", global: true }, { cwd: projB })
+assert.equal(out.content, "already recorded — no change")
+console.log("PASS 9: global note appends to existing file; duplicate is a no-op")
+
+// 10. global write without globalDir configured is a clean error, not a crash
+process.env.MEMORY_INJECT_CONFIG = path.join(HOME, "no-such-config.json")
+out = await note.execute({ file: "90-x.md", note: "needs global", global: true }, { cwd: projA })
+assert.match(out.content, /global store not configured/)
+process.env.MEMORY_INJECT_CONFIG = path.join(HOME, "config.json")
+console.log("PASS 10: global note without globalDir is a clean error")
+
+console.log(`\nall 10 tests passed (sandbox: ${HOME})`)

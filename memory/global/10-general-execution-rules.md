@@ -1,0 +1,10 @@
+- Treat every technical claim as a hypothesis until verified by runnable evidence.
+- Do not assert behavior from code reading alone unless it is mechanically obvious.
+- For negative results, require positive controls before concluding "not found" or "not reproducible".
+- Use smallest-step isolation first: prove one invariant, then layer complexity.
+- Before broad unification/refactor, verify feature coverage from both old and new paths.
+- On confirmed bugs, capture prevention rules (tests, linting, guardrails), not only one-off fixes.
+- Prefer minimal, reversible changes with clear validation output.
+- Ship only proven fixes: A/B each change in the real environment by reverting it alone and watching the symptom return, and drop or flag anything without that evidence. Audit the final diff hunk by hunk against the evidence before pushing. Unproven extras are excess change.
+- Env-driven booleans and numbers arrive as strings: parse explicitly or "false" is truthy and silently keeps a feature on. Check every env-mapped flag when adding config.
+- Before filing a ticket/issue for a bug, search the tracker for existing ones (same component, recent, summary keywords) and show the candidates — a duplicate filed in haste costs more than the search.

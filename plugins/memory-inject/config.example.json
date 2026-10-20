@@ -1,5 +1,6 @@
 {
   "baseDir": "~/Source/memory-learnings-review/memory",
+  "globalDir": "~/Source/memory-learnings-review/memory/global",
   "memoryDirs": [
     {
       "prefix": "/home/you/code/my-repo",

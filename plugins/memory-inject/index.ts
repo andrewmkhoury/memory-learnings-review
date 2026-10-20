@@ -20,12 +20,16 @@ import path from "node:path"
 const CLAUDE_HOME = path.join(os.homedir(), ".claude")
 // Config location; MEMORY_INJECT_CONFIG overrides (used by the test harness
 // and by anyone who keeps the plugin outside the default plugin directory).
-const CONFIG_FILE =
-  process.env.MEMORY_INJECT_CONFIG ??
-  path.join(os.homedir(), ".config/opencode/plugins/memory-inject/config.json")
+// Read per call so a relocated config is picked up without a restart.
+function configFilePath() {
+  return (
+    process.env.MEMORY_INJECT_CONFIG ??
+    path.join(os.homedir(), ".config/opencode/plugins/memory-inject/config.json")
+  )
+}
 
 interface Mapping { prefix: string; dir: string }
-interface Config { memoryDirs: Mapping[]; baseDir?: string }
+interface Config { memoryDirs: Mapping[]; baseDir?: string; globalDir?: string }
 
 function expand(p: string) {
   return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p
@@ -37,16 +41,21 @@ function slugFor(directory: string) {
 
 async function loadConfig(): Promise<Config> {
   try {
-    const raw = await readFile(CONFIG_FILE, "utf8")
-    const parsed = JSON.parse(raw) as { memoryDirs?: Mapping[]; baseDir?: string }
+    const raw = await readFile(configFilePath(), "utf8")
+    const parsed = JSON.parse(raw) as {
+      memoryDirs?: Mapping[]
+      baseDir?: string
+      globalDir?: string
+    }
     const memoryDirs = (parsed.memoryDirs ?? [])
       .filter((m) => typeof m.prefix === "string" && typeof m.dir === "string")
       .map((m) => ({ prefix: expand(m.prefix), dir: expand(m.dir) }))
     const baseDir = typeof parsed.baseDir === "string" ? expand(parsed.baseDir) : undefined
-    return { memoryDirs, baseDir }
+    const globalDir = typeof parsed.globalDir === "string" ? expand(parsed.globalDir) : undefined
+    return { memoryDirs, baseDir, globalDir }
   } catch (error) {
     if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"))
-      console.error(`[memory-inject] ignoring unreadable config ${CONFIG_FILE}:`, error)
+      console.error(`[memory-inject] ignoring unreadable config ${configFilePath()}:`, error)
     return { memoryDirs: [] }
   }
 }
@@ -68,18 +77,25 @@ function matchDir(directory: string | undefined, cfg: Config): Mapping | undefin
 export default {
   id: "memory-inject",
   async setup(ctx: any) {
-    // Recall: attach the memory index once per session.
+    // Recall: attach the project memory index (and the global index, if
+    // configured) once per session.
     await ctx.session.hook("prompt", async (event: any) => {
       try {
         const session = await ctx.session.get({ sessionID: event.sessionID })
-        const match = matchDir(session?.location?.directory, await loadConfig())
-        const file = match && path.join(match.dir, "MEMORY.md")
-        if (!file || !existsSync(file)) return
-        const key = `memory-injected:${event.sessionID}`
-        if ((await ctx.storage.get(key)) !== undefined) return
-        event.prompt.files ??= []
-        event.prompt.files.push({ uri: `file://${file}` })
-        await ctx.storage.set(key, { at: Date.now() })
+        const cfg = await loadConfig()
+        const match = matchDir(session?.location?.directory, cfg)
+        const projectFile = match ? path.join(match.dir, "MEMORY.md") : undefined
+        const globalFile = cfg.globalDir ? path.join(cfg.globalDir, "MEMORY.md") : undefined
+        for (const [key, file] of [
+          [`memory-injected:${event.sessionID}`, projectFile],
+          [`memory-injected:global:${event.sessionID}`, globalFile],
+        ] as const) {
+          if (!file || !existsSync(file)) continue
+          if ((await ctx.storage.get(key)) !== undefined) continue
+          event.prompt.files ??= []
+          event.prompt.files.push({ uri: `file://${file}` })
+          await ctx.storage.set(key, { at: Date.now() })
+        }
       } catch (error) {
         console.error("[memory-inject] failed:", error)
       }
@@ -92,8 +108,8 @@ export default {
         description:
           "Record a durable memory (lesson, preference, pitfall, decision) in this project's memory files. " +
           "Appends one bullet to the topic file — and to other configured project dirs when the same file " +
-          "exists there — and adds a MEMORY.md index line for new files. Use when you learn something worth " +
-          "keeping beyond this session.",
+          "exists there — and adds a MEMORY.md index line for new files. Set global: true to write to the " +
+          "cross-project global store instead. Use when you learn something worth keeping beyond this session.",
         options: { codemode: false },
         input: {
           type: "object",
@@ -104,6 +120,10 @@ export default {
             },
             note: { type: "string", description: "One tight bullet, max 500 chars" },
             title: { type: "string", description: "New files only: label for the MEMORY.md index line" },
+            global: {
+              type: "boolean",
+              description: "Write to the global (cross-project) store instead of this project's store",
+            },
           },
           required: ["file", "note"],
           additionalProperties: false,
@@ -123,9 +143,17 @@ export default {
             if (!directory && sid)
               directory = (await ctx.session.get({ sessionID: sid }))?.location?.directory
             const cfg = await loadConfig()
-            const home = matchDir(directory, cfg)
-            if (!home)
-              return { content: "error: no memory directory mapped for this session's directory" }
+            const isGlobal = input?.global === true
+            let home: Mapping | undefined
+            if (isGlobal) {
+              if (!cfg.globalDir)
+                return { content: "error: global store not configured (set globalDir in the plugin config)" }
+              home = { prefix: "", dir: cfg.globalDir }
+            } else {
+              home = matchDir(directory, cfg)
+              if (!home)
+                return { content: "error: no memory directory mapped for this session's directory" }
+            }
 
             await mkdir(home.dir, { recursive: true })
             const idxBootstrap = path.join(home.dir, "MEMORY.md")
@@ -135,7 +163,7 @@ export default {
             const createdPrimary = !existsSync(primary)
             const targets = [primary]
             // Explicitly configured sibling projects keep shared topic files in sync.
-            for (const m of cfg.memoryDirs) {
+            for (const m of isGlobal ? [] : cfg.memoryDirs) {
               if (m.dir === home.dir) continue
               const t = path.join(m.dir, file)
               if (existsSync(t)) targets.push(t)
