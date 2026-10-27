@@ -54,6 +54,12 @@ dependencies) that provides recall and the write path:
   instead of the project store. This repo ships the author's general rules
   pre-seeded in `memory/global/` — editing those files (or adding to them)
   is how you shape the defaults every session starts with.
+- `openchamberDir` (optional): an OpenChamber-only store. Its `MEMORY.md` is
+  attached **only in OpenChamber sessions** (the plugin detects them via the
+  `OPENCHAMBER_HOST` env var that OpenChamber injects), and `memory_note`
+  with `openchamber: true` writes there. Use it for rules that reference
+  OpenChamber-specific tools (sessions, schedules, the knowledge panel) and
+  should not leak into plain OpenCode, Cursor, or Copilot contexts.
 
   Config lives at `~/.config/opencode/plugins/memory-inject/config.json`
   (see `config.example.json`); `~` is expanded. `install.sh` creates it for

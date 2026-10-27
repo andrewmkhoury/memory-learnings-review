@@ -12,6 +12,9 @@ import path from "node:path"
 const HOME = mkdtempSync(path.join(tmpdir(), "memory-inject-test-"))
 process.env.HOME = HOME
 process.env.MEMORY_INJECT_CONFIG = path.join(HOME, "config.json")
+// Isolate from OpenChamber: this env var is set when the test host itself is
+// an OpenChamber session, and would otherwise activate the OC store below.
+delete process.env.OPENCHAMBER_HOST
 
 // --- sandbox layout ---------------------------------------------------------
 const projA = path.join(HOME, "code", "alpha")
@@ -27,9 +30,12 @@ writeFileSync(path.join(memB, "MEMORY.md"), "# Memory index\n\n## Environment-Sp
 writeFileSync(path.join(memB, "30-shared.md"), "- older entry\n")
 const baseDir = path.join(HOME, "memory-store")
 const globalDir = path.join(HOME, "global-memory")
+const ocDir = path.join(HOME, "openchamber-memory")
 mkdirSync(globalDir, { recursive: true })
+mkdirSync(ocDir, { recursive: true })
 writeFileSync(path.join(globalDir, "MEMORY.md"), "# Global memory\n\n## General rules\n")
 writeFileSync(path.join(globalDir, "10-general-execution-rules.md"), "- existing global rule\n")
+writeFileSync(path.join(ocDir, "MEMORY.md"), "# OpenChamber memory\n\n## OpenChamber rules\n")
 writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({
   memoryDirs: [
     { prefix: projA, dir: "~/.claude/projects/-sandbox-code-alpha/memory" },
@@ -38,6 +44,7 @@ writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({
   ],
   baseDir, // unmapped directories fall back to <baseDir>/<slug> (fork-store mode)
   globalDir, // cross-project store, injected into every session
+  openchamberDir: ocDir, // injected into OpenChamber sessions only
 }))
 
 // --- mock OpenCode host ------------------------------------------------------
@@ -147,4 +154,47 @@ assert.match(out.content, /global store not configured/)
 process.env.MEMORY_INJECT_CONFIG = path.join(HOME, "config.json")
 console.log("PASS 10: global note without globalDir is a clean error")
 
-console.log(`\nall 10 tests passed (sandbox: ${HOME})`)
+// 11. OpenChamber scope: with OPENCHAMBER_HOST set, the OC index is attached
+//     (third file) and only in OpenChamber-looking sessions
+process.env.OPENCHAMBER_HOST = "127.0.0.1"
+sessions.set("s3", { location: { directory: projA } })
+const event3 = { sessionID: "s3", prompt: {} }
+await promptHandlers[0](event3)
+assert.deepEqual(
+  event3.prompt.files.map((f) => f.uri),
+  [
+    `file://${path.join(memA, "MEMORY.md")}`,
+    `file://${path.join(globalDir, "MEMORY.md")}`,
+    `file://${path.join(ocDir, "MEMORY.md")}`,
+  ],
+)
+delete process.env.OPENCHAMBER_HOST
+sessions.set("s4", { location: { directory: projA } })
+const event4 = { sessionID: "s4", prompt: {} }
+await promptHandlers[0](event4)
+assert.deepEqual(
+  event4.prompt.files.map((f) => f.uri),
+  [`file://${path.join(memA, "MEMORY.md")}`, `file://${path.join(globalDir, "MEMORY.md")}`],
+  "OC index must not be attached outside OpenChamber sessions",
+)
+console.log("PASS 11: OC index attached only when OPENCHAMBER_HOST is set")
+
+// 12. openchamber: true writes to the OC store only, indexed, no sibling sync
+out = await note.execute({ file: "50-oc-rules.md", note: "an openchamber-only rule", openchamber: true }, { cwd: projA })
+assert.match(out.content, /recorded in 50-oc-rules.md/)
+assert.match(out.content, /indexed in MEMORY.md/)
+assert.equal(readFileSync(path.join(ocDir, "50-oc-rules.md"), "utf8"), "- an openchamber-only rule\n")
+assert.match(readFileSync(path.join(ocDir, "MEMORY.md"), "utf8"), /\[oc rules\]\(50-oc-rules\.md\)/)
+assert.equal(existsSync(path.join(memA, "50-oc-rules.md")), false, "OC note must not leak into the project store")
+console.log("PASS 12: openchamber note written to the OC store only, indexed there")
+
+// 13. openchamber: true without openchamberDir configured is a clean error
+const cfgRaw = JSON.parse(readFileSync(process.env.MEMORY_INJECT_CONFIG, "utf8"))
+delete cfgRaw.openchamberDir
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify(cfgRaw))
+out = await note.execute({ file: "50-oc-rules.md", note: "needs oc store", openchamber: true }, { cwd: projA })
+assert.match(out.content, /OpenChamber store not configured/)
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({ ...cfgRaw, openchamberDir: ocDir }))
+console.log("PASS 13: openchamber note without openchamberDir is a clean error")
+
+console.log(`\nall 13 tests passed (sandbox: ${HOME})`)

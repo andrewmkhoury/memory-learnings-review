@@ -29,7 +29,19 @@ function configFilePath() {
 }
 
 interface Mapping { prefix: string; dir: string }
-interface Config { memoryDirs: Mapping[]; baseDir?: string; globalDir?: string }
+interface Config {
+  memoryDirs: Mapping[]
+  baseDir?: string
+  globalDir?: string
+  openchamberDir?: string
+}
+
+// OpenChamber launches its OpenCode sessions with OPENCHAMBER_HOST set; plain
+// OpenCode sessions do not have it. That is the scoping signal for the
+// OpenChamber-only store.
+function isOpenChamber() {
+  return Boolean(process.env.OPENCHAMBER_HOST)
+}
 
 function expand(p: string) {
   return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p
@@ -46,13 +58,16 @@ async function loadConfig(): Promise<Config> {
       memoryDirs?: Mapping[]
       baseDir?: string
       globalDir?: string
+      openchamberDir?: string
     }
     const memoryDirs = (parsed.memoryDirs ?? [])
       .filter((m) => typeof m.prefix === "string" && typeof m.dir === "string")
       .map((m) => ({ prefix: expand(m.prefix), dir: expand(m.dir) }))
     const baseDir = typeof parsed.baseDir === "string" ? expand(parsed.baseDir) : undefined
     const globalDir = typeof parsed.globalDir === "string" ? expand(parsed.globalDir) : undefined
-    return { memoryDirs, baseDir, globalDir }
+    const openchamberDir =
+      typeof parsed.openchamberDir === "string" ? expand(parsed.openchamberDir) : undefined
+    return { memoryDirs, baseDir, globalDir, openchamberDir }
   } catch (error) {
     if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"))
       console.error(`[memory-inject] ignoring unreadable config ${configFilePath()}:`, error)
@@ -86,9 +101,15 @@ export default {
         const match = matchDir(session?.location?.directory, cfg)
         const projectFile = match ? path.join(match.dir, "MEMORY.md") : undefined
         const globalFile = cfg.globalDir ? path.join(cfg.globalDir, "MEMORY.md") : undefined
+        // OpenChamber-only store: attached in OpenChamber sessions only.
+        const ocFile =
+          isOpenChamber() && cfg.openchamberDir
+            ? path.join(cfg.openchamberDir, "MEMORY.md")
+            : undefined
         for (const [key, file] of [
           [`memory-injected:${event.sessionID}`, projectFile],
           [`memory-injected:global:${event.sessionID}`, globalFile],
+          [`memory-injected:openchamber:${event.sessionID}`, ocFile],
         ] as const) {
           if (!file || !existsSync(file)) continue
           if ((await ctx.storage.get(key)) !== undefined) continue
@@ -109,7 +130,8 @@ export default {
           "Record a durable memory (lesson, preference, pitfall, decision) in this project's memory files. " +
           "Appends one bullet to the topic file — and to other configured project dirs when the same file " +
           "exists there — and adds a MEMORY.md index line for new files. Set global: true to write to the " +
-          "cross-project global store instead. Use when you learn something worth keeping beyond this session.",
+          "cross-project global store, or openchamber: true to write to the OpenChamber-only store " +
+          "(injected into OpenChamber sessions only). Use when you learn something worth keeping beyond this session.",
         options: { codemode: false },
         input: {
           type: "object",
@@ -123,6 +145,11 @@ export default {
             global: {
               type: "boolean",
               description: "Write to the global (cross-project) store instead of this project's store",
+            },
+            openchamber: {
+              type: "boolean",
+              description:
+                "Write to the OpenChamber store instead of this project's store (only injected into OpenChamber sessions)",
             },
           },
           required: ["file", "note"],
@@ -144,8 +171,15 @@ export default {
               directory = (await ctx.session.get({ sessionID: sid }))?.location?.directory
             const cfg = await loadConfig()
             const isGlobal = input?.global === true
+            const isOC = input?.openchamber === true
             let home: Mapping | undefined
-            if (isGlobal) {
+            if (isOC) {
+              if (!cfg.openchamberDir)
+                return {
+                  content: "error: OpenChamber store not configured (set openchamberDir in the plugin config)",
+                }
+              home = { prefix: "", dir: cfg.openchamberDir }
+            } else if (isGlobal) {
               if (!cfg.globalDir)
                 return { content: "error: global store not configured (set globalDir in the plugin config)" }
               home = { prefix: "", dir: cfg.globalDir }
@@ -163,7 +197,7 @@ export default {
             const createdPrimary = !existsSync(primary)
             const targets = [primary]
             // Explicitly configured sibling projects keep shared topic files in sync.
-            for (const m of isGlobal ? [] : cfg.memoryDirs) {
+            for (const m of isGlobal || isOC ? [] : cfg.memoryDirs) {
               if (m.dir === home.dir) continue
               const t = path.join(m.dir, file)
               if (existsSync(t)) targets.push(t)
