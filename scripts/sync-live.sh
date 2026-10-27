@@ -62,12 +62,17 @@ git add .
 git commit -m "sync: update from live install"
 
 # Push as the publishing account (the gh CLI may have several logged in).
-PREV_ACCOUNT="$(gh api user --jq .login 2>/dev/null || true)"
-if [ "$PREV_ACCOUNT" != "$PUBLISH_ACCOUNT" ]; then
-  gh auth switch -u "$PUBLISH_ACCOUNT"
-  RESTORE_ACCOUNT=1
-fi
-git push
-if [ "${RESTORE_ACCOUNT:-}" = "1" ]; then
-  gh auth switch -u "$PREV_ACCOUNT" || true
-fi
+# `gh auth switch` alone is not enough: git may still hand the keychain a
+# credential for a different account (seen: 403 denied to the other user).
+# Push with a one-shot token URL so the publishing account is guaranteed.
+REMOTE_URL="$(git remote get-url origin)"
+case "$REMOTE_URL" in
+  https://github.com/*)
+    TOKEN="$(gh auth token -u "$PUBLISH_ACCOUNT")"
+    git push "https://x-access-token:${TOKEN}@${REMOTE_URL#https://}" HEAD
+    unset TOKEN
+    ;;
+  *)
+    git push
+    ;;
+esac
