@@ -1,0 +1,14 @@
+---
+description: Recall and record durable project memory via the memory-inject MCP server
+alwaysApply: true
+---
+
+# Memory
+
+- At the start of a session, read the `memory://` resource from the
+  `memory-inject` MCP server that matches your working directory
+  (plus `memory://global`) before starting work.
+- Record durable, verified learnings (pitfalls, decisions, project
+  specifics) with the `memory_note` tool, passing `directory` = the
+  absolute path of the repo you are working in. One tight bullet per
+  note; global, cross-project rules use `global: true`.

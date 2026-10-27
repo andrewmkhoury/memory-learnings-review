@@ -87,6 +87,11 @@ any MCP-capable agent can use the store:
   instructions (Cursor rule, `AGENTS.md`, …): *"At session start, read the
   memory-inject `memory://` resource for your working directory before
   working; record durable learnings with `memory_note`."*
+  For Cursor, `install.sh` does both automatically when it finds
+  `~/.cursor`: it installs the recall rule
+  (`plugins/memory-inject/cursor-rule.mdc` →
+  `~/.cursor/rules/memory-inject.mdc`) and registers the MCP server in
+  `~/.cursor/mcp.json` without touching other entries.
 
 Register it wherever your client keeps MCP servers, e.g. Cursor's
 `~/.cursor/mcp.json` or a project's `.cursor/mcp.json`:

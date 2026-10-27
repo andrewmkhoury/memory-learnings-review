@@ -51,5 +51,29 @@ else:
     print(f"✓ plugin already registered in {path}")
 PY
 
+# Cursor: install the recall rule and register the MCP server, if Cursor is
+# present. Never touches other entries in mcp.json.
+if [ -d "$HOME/.cursor" ]; then
+  if [ -d "$HOME/.cursor/rules" ]; then
+    cp "$PLUGIN_DST/cursor-rule.mdc" "$HOME/.cursor/rules/memory-inject.mdc"
+    echo "✓ cursor rule -> $HOME/.cursor/rules/memory-inject.mdc"
+  fi
+  python3 - "$HOME/.cursor/mcp.json" "$PLUGIN_DST/memory-mcp.mjs" <<'PY'
+import json, sys, os
+path, server = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    with open(path) as f: cfg = json.load(f)
+servers = cfg.setdefault("mcpServers", {})
+entry = {"command": "node", "args": [server]}
+if servers.get("memory-inject") != entry:
+    servers["memory-inject"] = entry
+    with open(path, "w") as f: json.dump(cfg, f, indent=2)
+    print(f"✓ registered memory-inject MCP server in {path}")
+else:
+    print(f"✓ memory-inject MCP server already registered in {path}")
+PY
+fi
+
 echo "Optional: copy plugins/memory-inject/config.example.json to"
 echo "$PLUGIN_DST/config.json for explicit project -> memory-dir mappings."
