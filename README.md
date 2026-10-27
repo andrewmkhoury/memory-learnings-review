@@ -68,6 +68,50 @@ against a mock host in a sandboxed `$HOME`:
 node --experimental-strip-types test/harness.mjs   # Node >= 22.6
 ```
 
+### The MCP server (Cursor, Copilot, Claude Code, …)
+
+The same write path and memory indexes are exposed as a zero-dependency
+stdio MCP server (`plugins/memory-inject/memory-mcp.mjs`, shared logic in
+`memory-core.mjs` — both installed alongside the plugin by `install.sh`), so
+any MCP-capable agent can use the store:
+
+- **Tool `memory_note`** — same validation, idempotent append, sibling sync,
+  indexing, and `global` flag as the plugin. One difference: the call takes
+  an explicit `directory` argument (the repo you're working in), because an
+  MCP server doesn't know the agent's working directory; omitting it is a
+  clean error, never a misrouted write.
+- **Resources** — `memory://global` and `memory://project/<path>` expose the
+  `MEMORY.md` indexes, which is the recall half: the tool description tells
+  the agent to read the resource for its working directory at session start.
+  To make that bulletproof, add one line to your agent's global
+  instructions (Cursor rule, `AGENTS.md`, …): *"At session start, read the
+  memory-inject `memory://` resource for your working directory before
+  working; record durable learnings with `memory_note`."*
+
+Register it wherever your client keeps MCP servers, e.g. Cursor's
+`~/.cursor/mcp.json` or a project's `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memory-inject": {
+      "command": "node",
+      "args": ["/Users/<you>/.config/opencode/plugins/memory-inject/memory-mcp.mjs"]
+    }
+  }
+}
+```
+
+(The server reads the same `config.json` as the plugin, so both stay in
+sync with the same store; the point it at via `MEMORY_INJECT_CONFIG`.)
+
+The server is covered by a harness that spawns the real process and drives
+the MCP protocol in a sandboxed `$HOME`:
+
+```bash
+node test/mcp-harness.mjs
+```
+
 ## How the skill works
 
 - **Collect candidates** — scan the session for verified mistakes and their
@@ -113,7 +157,9 @@ The skill's curation logic is tool-agnostic, with three spots to adapt:
   global agent-instructions file if you use one).
 - The topic-file names in step 4 — replace with your own categories.
 - The `memory_note` tool reference in step 4 — substitute whatever write
-  path you have (or plain file edits).
+  path you have (or plain file edits). If your agent speaks MCP, the
+  bundled `memory-mcp` server already provides the tool, so this step works
+  as written.
 
 The plugin is generic out of the box; nothing to port unless your memory
 store lives somewhere unusual.
@@ -171,11 +217,14 @@ mappings pointing them at one shared directory so lessons stay in sync
 ## Repo layout
 
 - `skills/memory-learnings-review/SKILL.md` — the curation skill.
-- `plugins/memory-inject/` — the recall + `memory_note` OpenCode plugin and
-  a `config.example.json`.
+- `plugins/memory-inject/` — the recall + `memory_note` OpenCode plugin,
+  `config.example.json`, and the MCP server (`memory-mcp.mjs` + shared
+  `memory-core.mjs`) that exposes the same store to any MCP-capable agent
+  (Cursor, Copilot, Claude Code, …).
 - `memory/` — the fork's memory store (per-project slug directories);
   `memory/global/` — the pre-seeded cross-project general rules.
 - `scripts/` — `install.sh` (install/upgrade), `memory-push.sh`
   (commit + push `memory/`), `sync-live.sh` (author-only publishing).
-- `test/harness.mjs` — behavioral tests for the plugin.
+- `test/harness.mjs` — behavioral tests for the plugin;
+  `test/mcp-harness.mjs` — protocol tests for the MCP server.
 - `README.md` — this file.
