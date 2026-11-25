@@ -7,8 +7,11 @@ alwaysApply: true
 
 - At the start of a session, read the `memory://` resource from the
   `memory-inject` MCP server that matches your working directory
-  (plus `memory://global`) before starting work.
+  (plus `memory://global`) — or call `memory_search` — before starting work.
+- Use `memory_search` to inspect topic files or search existing lessons
+  before recording new ones so you don't duplicate entries.
 - Record durable, verified learnings (pitfalls, decisions, project
-  specifics) with the `memory_note` tool, passing `directory` = the
-  absolute path of the repo you are working in. One tight bullet per
-  note; global, cross-project rules use `global: true`.
+  specifics) with `memory_note`, passing `directory` = the absolute path
+  of the repo you are working in. One tight bullet per note; global,
+  cross-project rules use `global: true`. To park an unreviewed candidate
+  mid-session for later curation, pass `stage: true`.

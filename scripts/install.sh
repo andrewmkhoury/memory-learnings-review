@@ -15,7 +15,7 @@ mkdir -p "$HOME/.claude/skills" "$HOME/.config/opencode/plugins"
 rsync -a --delete "$SKILL_SRC/" "$SKILL_DST/"
 echo "✓ skill -> $SKILL_DST"
 
-rsync -a --delete "$PLUGIN_SRC/" "$PLUGIN_DST/"
+rsync -a --delete --exclude='config.json' "$PLUGIN_SRC/" "$PLUGIN_DST/"
 echo "✓ plugin -> $PLUGIN_DST"
 
 # Fork-store mode: if the user has no config, point every project's memory at

@@ -1,15 +1,23 @@
 #!/usr/bin/env node
 // memory-mcp: stdio MCP server exposing the memory-inject system to any
-// MCP-capable agent (Copilot, Claude Code, ...). Zero dependencies.
+// MCP-capable agent (Cursor, Copilot, Claude Code, ...). Zero dependencies.
 //
-//   - tool `memory_note` — same write path as the OpenCode plugin
-//   - resources           — the memory indexes, for recall at session start
+//   - tools     — `memory_note` (write/stage) and `memory_search` (inventory/search/read/clearStaging)
+//   - resources — memory indexes and topic files for recall at session start
 //
 // Framing: newline-delimited JSON-RPC 2.0 on stdin/stdout (MCP stdio).
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { loadConfig, matchDir, readIndex, writeNote } from "./memory-core.mjs"
+import {
+  clearStaging,
+  loadConfig,
+  matchDir,
+  readStoreFile,
+  resolveScopeDir,
+  searchMemory,
+  writeNote,
+} from "./memory-core.mjs"
 
 const DEFAULT_CONFIG = path.join(
   os.homedir(),
@@ -23,8 +31,9 @@ const memoryNoteTool = {
     "Record a durable memory (lesson, preference, pitfall, decision) in the project's memory files. " +
     "Appends one tight bullet (max 500 chars) to the topic file — and to other configured project " +
     "dirs when the same file exists there — and adds a MEMORY.md index line for new files. Set " +
-    "global: true to write to the cross-project global store. At the start of a session, read the " +
-    "memory:// resources for your working directory to recall prior learnings.",
+    "global: true for the cross-project global store, openchamber: true for the OpenChamber store, " +
+    "or stage: true to park a candidate in _staging.md for later curation. At session start, read the " +
+    "memory:// resources for your working directory (or call memory_search) to recall prior learnings.",
   inputSchema: {
     type: "object",
     properties: {
@@ -43,8 +52,45 @@ const memoryNoteTool = {
         type: "boolean",
         description: "Write to the global (cross-project) store instead of this project's store",
       },
+      openchamber: {
+        type: "boolean",
+        description: "Write to the OpenChamber-only store instead of this project's store",
+      },
+      stage: {
+        type: "boolean",
+        description: "Park as a pending candidate in _staging.md instead of committing to permanent memory",
+      },
     },
     required: ["directory", "file", "note"],
+    additionalProperties: false,
+  },
+}
+
+const memorySearchTool = {
+  name: "memory_search",
+  description:
+    "Inspect or search memory across project and global stores. Omit query and file to list all " +
+    "topic files with bullet counts, orphan/bloat flags, and pending _staging.md candidates. Pass " +
+    "query to search lines, file to read one topic file, or clearStaging: true to clear _staging.md.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      directory: {
+        type: "string",
+        description: "Absolute path of the project/repo you are working in.",
+      },
+      query: { type: "string", description: "Case-insensitive keyword to search across topic files" },
+      file: {
+        type: "string",
+        description: "Read a specific topic file basename (e.g. '30-project-context.md' or '_staging.md')",
+      },
+      global: { type: "boolean", description: "Scope file/clearStaging to the global store" },
+      openchamber: { type: "boolean", description: "Scope file/clearStaging to the OpenChamber store" },
+      clearStaging: {
+        type: "boolean",
+        description: "Remove _staging.md for the selected scope after curating its candidates",
+      },
+    },
     additionalProperties: false,
   },
 }
@@ -72,19 +118,21 @@ function listResources(cfg) {
 }
 
 function readResource(uri, cfg) {
-  if (uri === "memory://global") {
-    const file = path.join(cfg.globalDir ?? "", "MEMORY.md")
-    if (!existsSync(file)) throw new Error("global store not configured")
-    return { uri, text: readFileSync(file, "utf8") }
+  if (uri === "memory://global" || uri.startsWith("memory://global/")) {
+    const fileName = uri === "memory://global" ? "MEMORY.md" : uri.slice("memory://global/".length)
+    const res = readStoreFile(cfg.globalDir, fileName)
+    if (!res) throw new Error(`global resource not found: ${fileName}`)
+    return { uri, text: res.text }
   }
   if (uri.startsWith("memory://project/")) {
-    const prefix = decodeURIComponent(uri.slice("memory://project/".length))
-    const match = cfg.memoryDirs.find(
-      (m) => m.prefix === prefix || m.dir === matchDir(prefix, cfg)?.dir,
-    )
-    const file = match && path.join(match.dir, "MEMORY.md")
-    if (!file || !existsSync(file)) throw new Error(`no memory index for ${prefix}`)
-    return { uri, text: readFileSync(file, "utf8") }
+    const rest = uri.slice("memory://project/".length)
+    const slash = rest.indexOf("/")
+    const prefix = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash))
+    const fileName = slash === -1 ? "MEMORY.md" : rest.slice(slash + 1)
+    const match = matchDir(prefix, cfg)
+    const res = match && readStoreFile(match.dir, fileName)
+    if (!res) throw new Error(`no memory resource for ${prefix} (${fileName})`)
+    return { uri, text: res.text }
   }
   throw new Error(`unknown resource uri: ${uri}`)
 }
@@ -98,22 +146,51 @@ function handle(msg) {
         return respond(id, {
           protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
           capabilities: { tools: {}, resources: {} },
-          serverInfo: { name: "memory-inject", version: "1.0.0" },
+          serverInfo: { name: "memory-inject", version: "1.1.0" },
         })
       case "tools/list":
-        return respond(id, { tools: [memoryNoteTool] })
+        return respond(id, { tools: [memoryNoteTool, memorySearchTool] })
       case "tools/call": {
-        if (msg.params?.name !== "memory_note")
-          throw new Error(`unknown tool: ${msg.params?.name}`)
-        const p = msg.params.arguments ?? {}
-        const result = writeNote({
-          cfg: loadConfig(configPath()),
-          directory: String(p.directory ?? "").trim(),
-          file: String(p.file ?? "").trim(),
-          note: String(p.note ?? "").replace(/\s*\n\s*/g, " ").trim(),
-          title: p.title,
-          isGlobal: p.global === true,
-        })
+        const name = msg.params?.name
+        const p = msg.params?.arguments ?? {}
+        const cfg = loadConfig(configPath())
+        let result
+        if (name === "memory_note") {
+          result = writeNote({
+            cfg,
+            directory: String(p.directory ?? "").trim(),
+            file: String(p.file ?? "").trim(),
+            note: String(p.note ?? "").replace(/\s*\n\s*/g, " ").trim(),
+            title: p.title,
+            isGlobal: p.global === true,
+            isOpenChamber: p.openchamber === true,
+            stage: p.stage === true,
+          })
+        } else if (name === "memory_search") {
+          const directory = String(p.directory ?? "").trim()
+          const isGlobal = p.global === true
+          const isOC = p.openchamber === true
+          if (p.clearStaging === true) {
+            result = clearStaging({ cfg, directory, isGlobal, isOpenChamber: isOC })
+          } else if (p.file) {
+            const { home, error } = resolveScopeDir({ cfg, directory, isGlobal, isOpenChamber: isOC })
+            if (error) {
+              result = { content: error }
+            } else {
+              const res = readStoreFile(home.dir, String(p.file).trim())
+              result = res ? { content: res.text } : { content: `error: file not found (${p.file})` }
+            }
+          } else {
+            result = searchMemory({
+              cfg,
+              directory,
+              query: p.query,
+              includeOpenChamber: isOC,
+            })
+          }
+        } else {
+          throw new Error(`unknown tool: ${name}`)
+        }
         const isError = result.content.startsWith("error:")
         return respond(id, {
           content: [{ type: "text", text: result.content }],

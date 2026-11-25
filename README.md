@@ -38,14 +38,22 @@ An OpenCode plugin (`plugins/memory-inject/index.ts`, no runtime
 dependencies) that provides recall and the write path:
 
 - On the first prompt of each session it attaches the matching project's
-  `MEMORY.md` to the prompt (once per session, keyed in plugin storage).
-- It registers the `memory_note` tool: validates the note (one bullet,
-  ≤500 chars), appends it idempotently to the topic file, syncs sibling
-  configured projects, and indexes new topic files in `MEMORY.md`.
+  `MEMORY.md` to the prompt (once per session, keyed in plugin storage). To
+  keep first-turn context small, `maxIndexBytes` (default `4096`) automatically
+  compacts oversized indexes to bare topic titles, and `injectIndex: false`
+  disables turn-1 attachment altogether (relying on `memory_search` on demand).
+- It registers two tools (sharing `memory-core.mjs` with the MCP server):
+  - `memory_note`: validates the note (one bullet, ≤500 chars), appends it
+    idempotently to the topic file, syncs sibling configured projects, and
+    indexes new topic files in `MEMORY.md`. Pass `stage: true` to park an
+    unreviewed candidate in `_staging.md` mid-session for later curation.
+  - `memory_search`: lists all topic files with bullet counts, unindexed/bloat
+    flags, and pending `_staging.md` candidates (when called with no args),
+    searches across stores by keyword (`query`), reads a single topic file
+    (`file`), or clears `_staging.md` (`clearStaging: true`).
 - Project → memory-dir resolution, in priority order:
-  1. explicit `memoryDirs` mappings (used to point several checkouts of the
-     same project at one shared memory directory, so topic files stay in
-     sync across them);
+  1. explicit `memoryDirs` mappings (longest prefix first, so nested checkouts
+     beat parent dirs; also keeps shared topic files in sync across siblings);
   2. if `baseDir` is set, `<baseDir>/<slug>` — **fork-store mode**, where
      this repo's `memory/` directory is the user's memory store;
   3. the Claude Code slug convention.
@@ -81,13 +89,18 @@ stdio MCP server (`plugins/memory-inject/memory-mcp.mjs`, shared logic in
 `memory-core.mjs` — both installed alongside the plugin by `install.sh`), so
 any MCP-capable agent can use the store:
 
-- **Tool `memory_note`** — same validation, idempotent append, sibling sync,
-  indexing, and `global` flag as the plugin. One difference: the call takes
-  an explicit `directory` argument (the repo you're working in), because an
-  MCP server doesn't know the agent's working directory; omitting it is a
-  clean error, never a misrouted write.
-- **Resources** — `memory://global` and `memory://project/<path>` expose the
-  `MEMORY.md` indexes, which is the recall half: the tool description tells
+- **Tools `memory_note` & `memory_search`** — same validation, idempotent
+  append, sibling sync, indexing, staging (`stage: true`), and
+  `global`/`openchamber` flags as the plugin, plus `memory_search` for
+  inventory, keyword search, reading individual topic files, and clearing
+  `_staging.md`. One difference: `memory_note` takes an explicit `directory`
+  argument (the repo you're working in), because an MCP server doesn't know
+  the agent's working directory; omitting it is a clean error, never a
+  misrouted write.
+- **Resources** — `memory://global`, `memory://global/<file>`,
+  `memory://project/<path>`, and `memory://project/<path>/<file>` expose both
+  `MEMORY.md` indexes and individual topic files (including `baseDir` and
+  slug-fallback stores): the tool description tells
   the agent to read the resource for its working directory at session start.
   To make that bulletproof, add one line to your agent's global
   instructions (Cursor rule, `AGENTS.md`, …): *"At session start, read the

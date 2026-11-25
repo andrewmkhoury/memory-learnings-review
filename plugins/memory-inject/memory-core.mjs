@@ -1,9 +1,15 @@
 // Shared memory-store logic for the memory-inject system. Pure Node, no
 // dependencies, used by both the OpenCode plugin (index.ts) and the MCP
 // server (memory-mcp.mjs). Sync I/O is fine: files are small and local.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+
+export const STAGING_FILE = "_staging.md"
+export const DEFAULT_MAX_INDEX_BYTES = 4096
+const MAX_SEARCH_MATCHES = 30
+const SNIPPET_MAX_CHARS = 240
 
 export function expand(p) {
   return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p
@@ -13,29 +19,73 @@ export function slugFor(directory) {
   return directory.replace(/\//g, "-")
 }
 
-/** @returns {{memoryDirs: Array<{prefix:string,dir:string}>, baseDir?: string, globalDir?: string}} */
+/** @returns {{memoryDirs: Array<{prefix:string,dir:string}>, baseDir?: string, globalDir?: string, openchamberDir?: string, injectIndex: boolean, maxIndexBytes: number}} */
 export function loadConfig(cfgPath) {
+  const defaults = {
+    memoryDirs: [],
+    injectIndex: true,
+    maxIndexBytes: DEFAULT_MAX_INDEX_BYTES,
+  }
   let raw
   try {
     raw = readFileSync(cfgPath, "utf8")
   } catch (error) {
     if (error.code !== "ENOENT")
       console.error(`[memory-inject] ignoring unreadable config ${cfgPath}:`, error)
-    return { memoryDirs: [] }
+    return defaults
   }
   let parsed
   try {
     parsed = JSON.parse(raw)
   } catch (error) {
     console.error(`[memory-inject] ignoring invalid config ${cfgPath}:`, error)
-    return { memoryDirs: [] }
+    return defaults
   }
   const memoryDirs = (parsed.memoryDirs ?? [])
     .filter((m) => typeof m.prefix === "string" && typeof m.dir === "string")
     .map((m) => ({ prefix: expand(m.prefix), dir: expand(m.dir) }))
+    // Longest prefix first so nested project mappings always beat parent dirs.
+    .sort((a, b) => b.prefix.length - a.prefix.length)
   const baseDir = typeof parsed.baseDir === "string" ? expand(parsed.baseDir) : undefined
   const globalDir = typeof parsed.globalDir === "string" ? expand(parsed.globalDir) : undefined
-  return { memoryDirs, baseDir, globalDir }
+  const openchamberDir =
+    typeof parsed.openchamberDir === "string" ? expand(parsed.openchamberDir) : undefined
+  const injectIndex = typeof parsed.injectIndex === "boolean" ? parsed.injectIndex : true
+  const maxIndexBytes =
+    typeof parsed.maxIndexBytes === "number" && parsed.maxIndexBytes > 0
+      ? Math.floor(parsed.maxIndexBytes)
+      : DEFAULT_MAX_INDEX_BYTES
+  return { memoryDirs, baseDir, globalDir, openchamberDir, injectIndex, maxIndexBytes }
+}
+
+/**
+ * Return the path to attach for a MEMORY.md file on first prompt.
+ * - If within `maxIndexBytes`, returns the original file path unchanged.
+ * - If larger, writes a compact title-only index (<= maxIndexBytes) in tmpdir
+ *   so turn-1 context never blows up.
+ */
+export function prepareIndexForInjection(indexPath, maxIndexBytes = DEFAULT_MAX_INDEX_BYTES) {
+  if (!indexPath || !existsSync(indexPath)) return undefined
+  const raw = readFileSync(indexPath, "utf8")
+  if (Buffer.byteLength(raw, "utf8") <= maxIndexBytes) return indexPath
+
+  const footer = "\n<!-- compacted for turn-1 budget; call memory_search for details -->\n"
+  const budget = Math.max(256, maxIndexBytes - Buffer.byteLength(footer, "utf8"))
+  const compactLines = []
+  let used = 0
+  for (const line of raw.split("\n")) {
+    // Strip verbose " — summary..." descriptions from index bullets.
+    const slim = line.replace(/^(\s*-\s+\[[^\]]+\]\([^)]+\))\s+[—–-]\s+.*$/, "$1")
+    const bytes = Buffer.byteLength(slim + "\n", "utf8")
+    if (used + bytes > budget) break
+    compactLines.push(slim)
+    used += bytes
+  }
+  const out = compactLines.join("\n").trimEnd() + footer
+  const hash = createHash("sha1").update(indexPath).digest("hex").slice(0, 12)
+  const compactPath = path.join(os.tmpdir(), `memory-inject-compact-${hash}.md`)
+  writeFileSync(compactPath, out)
+  return compactPath
 }
 
 export function matchDir(directory, cfg) {
@@ -51,9 +101,39 @@ export function matchDir(directory, cfg) {
   return { prefix: directory, dir }
 }
 
-export function validateNote(file, note) {
+/**
+ * Resolve the target store directory for project / global / openchamber scopes.
+ * @returns {{home?: {prefix:string,dir:string}, error?: string}}
+ */
+export function resolveScopeDir({ cfg, directory, isGlobal = false, isOpenChamber = false }) {
+  if (isOpenChamber) {
+    if (!cfg.openchamberDir)
+      return {
+        error: "error: OpenChamber store not configured (set openchamberDir in the plugin config)",
+      }
+    return { home: { prefix: "", dir: cfg.openchamberDir } }
+  }
+  if (isGlobal) {
+    if (!cfg.globalDir)
+      return { error: "error: global store not configured (set globalDir in the plugin config)" }
+    return { home: { prefix: "", dir: cfg.globalDir } }
+  }
+  const home = matchDir(directory, cfg)
+  if (!home) return { error: "error: no memory directory mapped for this session's directory" }
+  return { home }
+}
+
+export function validateTopicFilename(file) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*\.md$/.test(file))
     return "error: file must be a plain basename like 40-topic-name.md"
+  if (file === "MEMORY.md")
+    return "error: MEMORY.md is managed automatically — write to a topic file instead"
+  return undefined
+}
+
+export function validateNote(file, note) {
+  const fileErr = validateTopicFilename(file)
+  if (fileErr) return fileErr
   if (!note) return "error: note is required"
   if (note.length > 500)
     return "error: note too long (max 500 chars) — keep it to one tight bullet"
@@ -61,24 +141,67 @@ export function validateNote(file, note) {
 }
 
 /**
+ * Append a lightweight candidate learning to _staging.md (not indexed in
+ * MEMORY.md) for later curation by memory-learnings-review.
+ * @returns {{content: string}}
+ */
+export function stageNote({ cfg, directory, note, file, isGlobal = false, isOpenChamber = false }) {
+  if (!note) return { content: "error: note is required" }
+  if (note.length > 500)
+    return { content: "error: note too long (max 500 chars) — keep it to one tight bullet" }
+  if (file) {
+    const fileErr = validateTopicFilename(file)
+    if (fileErr) return { content: fileErr }
+  }
+  const { home, error } = resolveScopeDir({ cfg, directory, isGlobal, isOpenChamber })
+  if (error) return { content: error }
+
+  mkdirSync(home.dir, { recursive: true })
+  const stagingPath = path.join(home.dir, STAGING_FILE)
+  const hint = file ? ` [target: ${file}]` : ""
+  const line = `- ${note}${hint}`
+  let body = existsSync(stagingPath) ? readFileSync(stagingPath, "utf8") : ""
+  if (body.includes(line)) return { content: "already staged — no change" }
+  if (body && !body.endsWith("\n")) body += "\n"
+  writeFileSync(stagingPath, body + line + "\n")
+  return { content: `staged in ${STAGING_FILE} (pending review)` }
+}
+
+/**
+ * Clear _staging.md after curation.
+ * @returns {{content: string}}
+ */
+export function clearStaging({ cfg, directory, isGlobal = false, isOpenChamber = false }) {
+  const { home, error } = resolveScopeDir({ cfg, directory, isGlobal, isOpenChamber })
+  if (error) return { content: error }
+  const stagingPath = path.join(home.dir, STAGING_FILE)
+  if (!existsSync(stagingPath)) return { content: "staging already empty" }
+  unlinkSync(stagingPath)
+  return { content: `cleared ${STAGING_FILE}` }
+}
+
+/**
  * Append one bullet to a topic file (and to sibling configured projects that
  * already have it), indexing new files in MEMORY.md. Idempotent.
  * @returns {{content: string}}
  */
-export function writeNote({ cfg, directory, file, note, title, isGlobal = false }) {
+export function writeNote({
+  cfg,
+  directory,
+  file,
+  note,
+  title,
+  isGlobal = false,
+  isOpenChamber = false,
+  stage = false,
+}) {
+  if (stage) return stageNote({ cfg, directory, note, file, isGlobal, isOpenChamber })
+
   const validation = validateNote(file, note)
   if (validation) return { content: validation }
 
-  let home
-  if (isGlobal) {
-    if (!cfg.globalDir)
-      return { content: "error: global store not configured (set globalDir in the plugin config)" }
-    home = { prefix: "", dir: cfg.globalDir }
-  } else {
-    home = matchDir(directory, cfg)
-    if (!home)
-      return { content: "error: no memory directory mapped for this session's directory" }
-  }
+  const { home, error } = resolveScopeDir({ cfg, directory, isGlobal, isOpenChamber })
+  if (error) return { content: error }
 
   mkdirSync(home.dir, { recursive: true })
   const idxPath = path.join(home.dir, "MEMORY.md")
@@ -87,7 +210,7 @@ export function writeNote({ cfg, directory, file, note, title, isGlobal = false 
   const primary = path.join(home.dir, file)
   const createdPrimary = !existsSync(primary)
   const targets = [primary]
-  for (const m of isGlobal ? [] : cfg.memoryDirs) {
+  for (const m of isGlobal || isOpenChamber ? [] : cfg.memoryDirs) {
     if (m.dir === home.dir) continue
     const t = path.join(m.dir, file)
     if (existsSync(t)) targets.push(t)
@@ -136,4 +259,126 @@ export function readIndex(directory, cfg) {
   const file = match && path.join(match.dir, "MEMORY.md")
   if (!file || !existsSync(file)) return undefined
   return { file, text: readFileSync(file, "utf8") }
+}
+
+/** Read a specific markdown file (MEMORY.md, _staging.md, or topic file) inside a store dir. */
+export function readStoreFile(dir, file) {
+  if (!dir || !existsSync(dir)) return undefined
+  if (file !== "MEMORY.md" && file !== STAGING_FILE) {
+    if (validateTopicFilename(file)) return undefined
+  }
+  const full = path.join(dir, file)
+  if (!existsSync(full)) return undefined
+  return { file: full, text: readFileSync(full, "utf8") }
+}
+
+function collectScopes({ cfg, directory, includeOpenChamber = false }) {
+  const scopes = []
+  const project = matchDir(directory, cfg)
+  if (project && existsSync(project.dir)) scopes.push({ scope: "project", dir: project.dir })
+  if (cfg.globalDir && existsSync(cfg.globalDir)) scopes.push({ scope: "global", dir: cfg.globalDir })
+  if (includeOpenChamber && cfg.openchamberDir && existsSync(cfg.openchamberDir))
+    scopes.push({ scope: "openchamber", dir: cfg.openchamberDir })
+  return scopes
+}
+
+function formatSnippet(line, queryLower) {
+  if (line.length <= SNIPPET_MAX_CHARS) return line
+  const idx = line.toLowerCase().indexOf(queryLower)
+  const half = Math.floor((SNIPPET_MAX_CHARS - queryLower.length) / 2)
+  const start = Math.max(0, idx - half)
+  const end = Math.min(line.length, start + SNIPPET_MAX_CHARS)
+  const prefix = start > 0 ? "…" : ""
+  const suffix = end < line.length ? "…" : ""
+  return prefix + line.slice(start, end) + suffix
+}
+
+/**
+ * Inspect or search memory across project, global, and (optionally) openchamber stores.
+ * - With `query`: case-insensitive substring search across all topic files + _staging.md
+ *   with snippet truncation for long lines.
+ * - Without `query`: inventory of topic files with bullet counts, orphan/bloat/duplicate flags,
+ *   and pending staged candidates.
+ * @returns {{content: string}}
+ */
+export function searchMemory({ cfg, directory, query, includeOpenChamber = false }) {
+  const scopes = collectScopes({ cfg, directory, includeOpenChamber })
+  if (scopes.length === 0) return { content: "no memory stores found for this directory" }
+
+  const q = String(query ?? "").trim().toLowerCase()
+  const out = []
+
+  if (!q) {
+    // Track which topic basenames appear in multiple active scopes.
+    const seenInScopes = new Map()
+    for (const { scope, dir } of scopes) {
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".md") || f === "MEMORY.md" || f === STAGING_FILE) continue
+        const set = seenInScopes.get(f) ?? new Set()
+        set.add(scope)
+        seenInScopes.set(f, set)
+      }
+    }
+
+    for (const { scope, dir } of scopes) {
+      const files = readdirSync(dir)
+        .filter((f) => f.endsWith(".md"))
+        .sort()
+      const idxPath = path.join(dir, "MEMORY.md")
+      const idxText = existsSync(idxPath) ? readFileSync(idxPath, "utf8") : ""
+      out.push(`[${scope}] ${dir}`)
+      const topics = files.filter((f) => f !== "MEMORY.md" && f !== STAGING_FILE)
+      if (topics.length === 0) {
+        out.push("  (no topic files)")
+      } else {
+        for (const f of topics) {
+          const full = path.join(dir, f)
+          const text = readFileSync(full, "utf8")
+          const bullets = text.split("\n").filter((l) => /^\s*-\s+/.test(l)).length
+          const bytes = statSync(full).size
+          const indexed = idxText.includes(`](${f})`)
+          const flags = []
+          if (!indexed) flags.push("unindexed")
+          if (bullets >= 25 || bytes >= 8192) flags.push("large — consider compacting")
+          const otherScopes = [...(seenInScopes.get(f) ?? [])].filter((s) => s !== scope)
+          if (otherScopes.length > 0) flags.push(`also in ${otherScopes.join(", ")}`)
+          const sizeStr = bytes >= 4096 ? `, ${(bytes / 1024).toFixed(1)} KB` : ""
+          const suffix = flags.length ? ` (${flags.join(", ")})` : ""
+          out.push(`  - ${f}: ${bullets} bullets${sizeStr}${suffix}`)
+        }
+      }
+      const stagingPath = path.join(dir, STAGING_FILE)
+      if (existsSync(stagingPath)) {
+        const staged = readFileSync(stagingPath, "utf8")
+          .split("\n")
+          .filter((l) => /^\s*-\s+/.test(l))
+        if (staged.length > 0) {
+          out.push(`  - ${STAGING_FILE}: ${staged.length} pending candidate(s)`)
+          for (const line of staged) out.push(`      ${line}`)
+        }
+      }
+    }
+    return { content: out.join("\n") }
+  }
+
+  let matches = 0
+  for (const { scope, dir } of scopes) {
+    const files = readdirSync(dir)
+      .filter((f) => f.endsWith(".md") && f !== "MEMORY.md")
+      .sort()
+    for (const f of files) {
+      const lines = readFileSync(path.join(dir, f), "utf8").split("\n")
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(q)) {
+          out.push(`[${scope}] ${f}:${i + 1}: ${formatSnippet(lines[i], q)}`)
+          matches++
+          if (matches >= MAX_SEARCH_MATCHES) {
+            out.push(`... (truncated at ${MAX_SEARCH_MATCHES} matches)`)
+            return { content: out.join("\n") }
+          }
+        }
+      }
+    }
+  }
+  return { content: matches === 0 ? `no matches for "${query.trim()}"` : out.join("\n") }
 }

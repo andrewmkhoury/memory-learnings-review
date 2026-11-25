@@ -197,4 +197,87 @@ assert.match(out.content, /OpenChamber store not configured/)
 writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({ ...cfgRaw, openchamberDir: ocDir }))
 console.log("PASS 13: openchamber note without openchamberDir is a clean error")
 
-console.log(`\nall 13 tests passed (sandbox: ${HOME})`)
+// 14. longest-prefix-first: nested project mapping beats parent even when listed second
+const nestedProj = path.join(projA, "nested-app")
+const memNested = path.join(HOME, "mem-nested")
+mkdirSync(nestedProj, { recursive: true })
+mkdirSync(memNested, { recursive: true })
+const cfgWithNested = JSON.parse(readFileSync(process.env.MEMORY_INJECT_CONFIG, "utf8"))
+cfgWithNested.memoryDirs.push({ prefix: nestedProj, dir: memNested })
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify(cfgWithNested))
+out = await note.execute({ file: "30-nested.md", note: "nested project note" }, { cwd: nestedProj })
+assert.match(out.content, /recorded in 30-nested.md/)
+assert.equal(existsSync(path.join(memNested, "30-nested.md")), true, "nested dir must win over parent prefix")
+assert.equal(existsSync(path.join(memA, "30-nested.md")), false, "parent dir must not receive nested note")
+console.log("PASS 14: longest-prefix-first memoryDirs matching")
+
+// 15. MEMORY.md cannot be written to directly via memory_note
+out = await note.execute({ file: "MEMORY.md", note: "should not overwrite index" }, { cwd: projA })
+assert.match(out.content, /managed automatically/)
+console.log("PASS 15: MEMORY.md direct write rejected")
+
+// 16. mid-session staging: stage: true writes to _staging.md (not indexed), clearStaging removes it
+const search = addedTools.find((t) => t.name === "memory_search")
+assert.ok(search, "memory_search tool registered")
+out = await note.execute({ file: "40-notes.md", note: "candidate to review later", stage: true }, { cwd: projA })
+assert.match(out.content, /staged in _staging\.md/)
+assert.equal(readFileSync(path.join(memA, "_staging.md"), "utf8"), "- candidate to review later [target: 40-notes.md]\n")
+assert.equal(readFileSync(path.join(memA, "MEMORY.md"), "utf8").includes("_staging.md"), false)
+out = await note.execute({ file: "40-notes.md", note: "candidate to review later", stage: true }, { cwd: projA })
+assert.equal(out.content, "already staged — no change")
+let inv = await search.execute({}, { cwd: projA })
+assert.match(inv.content, /_staging\.md: 1 pending candidate/)
+assert.match(inv.content, /candidate to review later/)
+out = await search.execute({ clearStaging: true }, { cwd: projA })
+assert.match(out.content, /cleared _staging\.md/)
+assert.equal(existsSync(path.join(memA, "_staging.md")), false)
+console.log("PASS 16: staging parks candidates in _staging.md and clearStaging removes it")
+
+// 17. memory_search: inventory flags orphans & bloat, query searches across stores, file reads topic safely
+writeFileSync(path.join(memA, "99-orphan.md"), Array.from({ length: 26 }, (_, i) => `- bullet ${i}`).join("\n") + "\n")
+inv = await search.execute({}, { cwd: projA })
+assert.match(inv.content, /99-orphan\.md: 26 bullets \(unindexed, large — consider compacting\)/)
+let qOut = await search.execute({ query: "cross-project" }, { cwd: projA })
+assert.match(qOut.content, /\[global\] 90-global-topic\.md:1: - a cross-project rule/)
+let fOut = await search.execute({ file: "40-notes.md" }, { cwd: projA })
+assert.equal(fOut.content, "- first note on a new topic\n")
+let badFile = await search.execute({ file: "../evil.md" }, { cwd: projA })
+assert.match(badFile.content, /file not found/)
+console.log("PASS 17: memory_search inventory (orphan/bloat flags), keyword query, and safe file read")
+
+// 18. snippet truncation + cross-store duplicate flagging in memory_search
+writeFileSync(
+  path.join(memA, "10-general-execution-rules.md"),
+  `- ${"a".repeat(300)} NEEDLE_TOKEN ${"b".repeat(300)}\n`,
+)
+inv = await search.execute({}, { cwd: projA })
+assert.match(inv.content, /10-general-execution-rules\.md:.*also in global/)
+let snip = await search.execute({ query: "NEEDLE_TOKEN" }, { cwd: projA })
+assert.match(snip.content, /NEEDLE_TOKEN/)
+assert.ok(snip.content.length < 340, `expected truncated snippet, got ${snip.content.length} chars`)
+console.log("PASS 18: memory_search truncates long bullets and flags cross-store duplicate filenames")
+
+// 19. turn-1 context guard: maxIndexBytes compacts oversized MEMORY.md; injectIndex: false skips attach
+const bigLines = Array.from({ length: 60 }, (_, i) => `- [topic ${i}](${i}-topic.md) — ${"verbose summary ".repeat(5)}`)
+writeFileSync(path.join(memA, "MEMORY.md"), "# Memory index\n\n" + bigLines.join("\n") + "\n")
+const cfgGuard = JSON.parse(readFileSync(process.env.MEMORY_INJECT_CONFIG, "utf8"))
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({ ...cfgGuard, maxIndexBytes: 600 }))
+sessions.set("s5", { location: { directory: projA } })
+const event5 = { sessionID: "s5", prompt: {} }
+await promptHandlers[0](event5)
+const attachedA = event5.prompt.files[0].uri.replace("file://", "")
+assert.notEqual(attachedA, path.join(memA, "MEMORY.md"), "oversized index should attach compacted copy")
+const compactBody = readFileSync(attachedA, "utf8")
+assert.ok(Buffer.byteLength(compactBody, "utf8") <= 600, `compacted index exceeded 600 bytes: ${Buffer.byteLength(compactBody, "utf8")}`)
+assert.match(compactBody, /compacted for turn-1 budget/)
+assert.equal(compactBody.includes("verbose summary"), false, "descriptions should be stripped")
+
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify({ ...cfgGuard, injectIndex: false }))
+sessions.set("s6", { location: { directory: projA } })
+const event6 = { sessionID: "s6", prompt: {} }
+await promptHandlers[0](event6)
+assert.equal(event6.prompt.files, undefined, "injectIndex: false must attach nothing on turn 1")
+writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify(cfgGuard))
+console.log("PASS 19: maxIndexBytes compacts oversized MEMORY.md; injectIndex: false skips turn-1 attach")
+
+console.log(`\nall 19 tests passed (sandbox: ${HOME})`)

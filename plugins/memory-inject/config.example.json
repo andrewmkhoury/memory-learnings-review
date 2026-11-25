@@ -2,6 +2,8 @@
   "baseDir": "~/Source/memory-learnings-review/memory",
   "globalDir": "~/Source/memory-learnings-review/memory/global",
   "openchamberDir": "~/Source/memory-learnings-review/memory/openchamber",
+  "injectIndex": true,
+  "maxIndexBytes": 4096,
   "memoryDirs": [
     {
       "prefix": "/home/you/code/my-repo",

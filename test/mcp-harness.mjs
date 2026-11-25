@@ -171,23 +171,50 @@ try {
   assert.ok(!uris.includes(`memory://project/${encodeURIComponent(stray)}`), "store-only dirs are not resources")
   console.log("PASS 10: resources/list exposes global + configured project indexes")
 
-  // 11. resources/read returns the index text
+  // 11. resources/read returns index + topic text (including baseDir fallback); missing store errors
   const readA = (await rpc("resources/read", { uri: `memory://project/${encodeURIComponent(projA)}` }))
   assert.match(readA.result.contents[0].text, /\[notes\]\(40-notes\.md\)/)
+  const readATopic = (await rpc("resources/read", { uri: `memory://project/${encodeURIComponent(projA)}/40-notes.md` }))
+  assert.equal(readATopic.result.contents[0].text, "- first note on a new topic\n")
   const readG = (await rpc("resources/read", { uri: "memory://global" }))
   assert.match(readG.result.contents[0].text, /Global memory/)
-  const readMissing = await rpc("resources/read", { uri: `memory://project/${encodeURIComponent(stray)}` })
+  const readGTopic = (await rpc("resources/read", { uri: "memory://global/90-global-topic.md" }))
+  assert.equal(readGTopic.result.contents[0].text, "- a cross-project rule\n")
+  const readStray = (await rpc("resources/read", { uri: `memory://project/${encodeURIComponent(stray)}` }))
+  assert.match(readStray.result.contents[0].text, /\[rules\]\(10-rules\.md\)/)
+  const readMissing = await rpc("resources/read", { uri: `memory://project/${encodeURIComponent(path.join(HOME, "nope"))}` })
   assert.ok(readMissing.error, "unknown project index is a JSON-RPC error")
-  console.log("PASS 11: resources/read returns index text; unknown uri is an error")
+  console.log("PASS 11: resources/read returns index + topic text (incl. baseDir); missing store errors")
 
-  // 12. server survived the whole session; clean shutdown on stdin close
+  // 12. memory_search tool: inventory, query, file read, and staging lifecycle
+  const callSearch = (args) =>
+    rpc("tools/call", { name: "memory_search", arguments: args }).then((msg) => {
+      assert.ok(msg.result, `tools/call returned an error: ${JSON.stringify(msg.error)}`)
+      return { text: msg.result.content[0].text, isError: msg.result.isError === true }
+    })
+  out = await callNote({ directory: projA, file: "40-notes.md", note: "mcp staged candidate", stage: true })
+  assert.equal(out.isError, false)
+  assert.match(out.text, /staged in _staging\.md/)
+  let sOut = await callSearch({ directory: projA })
+  assert.equal(sOut.isError, false)
+  assert.match(sOut.text, /40-notes\.md: 1 bullets/)
+  assert.match(sOut.text, /mcp staged candidate/)
+  sOut = await callSearch({ directory: projA, query: "cross-project" })
+  assert.match(sOut.text, /\[global\] 90-global-topic\.md:1/)
+  sOut = await callSearch({ directory: projA, file: "40-notes.md" })
+  assert.equal(sOut.text, "- first note on a new topic\n")
+  sOut = await callSearch({ directory: projA, clearStaging: true })
+  assert.match(sOut.text, /cleared _staging\.md/)
+  console.log("PASS 12: memory_search tool (inventory, query, file read, staging lifecycle)")
+
+  // 13. server survived the whole session; clean shutdown on stdin close
   child.stdin.end()
   const code = await new Promise((resolve) => child.on("close", resolve))
   assert.equal(code, 0)
   assert.equal(stderr, "", `unexpected stderr: ${stderr}`)
-  console.log("PASS 12: clean shutdown, no stderr noise")
+  console.log("PASS 13: clean shutdown, no stderr noise")
 } finally {
   child.kill()
 }
 
-console.log(`\nall 12 MCP tests passed (sandbox: ${HOME})`)
+console.log(`\nall 13 MCP tests passed (sandbox: ${HOME})`)
