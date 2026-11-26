@@ -290,20 +290,36 @@ assert.equal(readFileSync(path.join(memA, "40-override.md"), "utf8"), "- targete
 console.log("PASS 20: ephemeral chat dir blocked for project writes; explicit directory override works")
 
 // 21. deterministic secret guard blocks credentials in both write and stage modes
+// Construct synthetic fixtures dynamically so GitHub push protection does not flag test literals.
 for (const secretNote of [
-  "use token ghp_1234567890abcdefghij1234567890abcd for CI",
-  "set key sk-ant-api03-1234567890abcdefghij12345",
-  "aws key AKIAIOSFODNN7EXAMPLE in env",
-  "slack xoxb-1234567890-abcdefg",
-  "header Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-  "key -----BEGIN RSA PRIVATE KEY-----",
+  `use token ${"ghp_" + "1234567890abcdefghij".repeat(2)} for CI`,
+  `gitlab ${"glpat-" + "1234567890abcdefghij"}`,
+  `set key ${"sk-" + "ant-api03-" + "1234567890abcdefghij12345"}`,
+  `stripe ${"sk_" + "live_" + "1234567890abcdefghij1234"}`,
+  `google ${"AIza" + "SyDaGmWKa4JsXZ-HjGw7ISLn_3namBGewQe"}`,
+  `aws key ${"AKIA" + "IOSFODNN7EXAMPLE"} in env`,
+  `slack ${"xoxb-" + "1234567890-abcdefg"}`,
+  `${"npm_" + "1234567890abcdefghij1234567890ab"}`,
+  `databricks ${"dapi" + "0123456789abcdef".repeat(2)}`,
+  `jwt ${"eyJ" + "hbGciOiJIUzI1NiJ9." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkwIn0." + "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}`,
+  `header Bearer ${"eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"}`,
+  `db postgres://admin:${"supersecret99"}@db.internal:5432/app`,
+  `key -----BEGIN ${"RSA PRIVATE"} KEY-----`,
 ]) {
   out = await note.execute({ file: "40-notes.md", note: secretNote }, { cwd: projA })
   assert.match(out.content, /appears to contain a secret/, `should block: ${secretNote}`)
 }
-out = await note.execute({ file: "40-notes.md", note: "token ghp_1234567890abcdefghij1234567890abcd", stage: true }, { cwd: projA })
+out = await note.execute({ file: "40-notes.md", note: `token ${"ghp_" + "1234567890abcdefghij".repeat(2)}`, stage: true }, { cwd: projA })
 assert.match(out.content, /appears to contain a secret/, "staging must also block secrets")
-console.log("PASS 21: secret-pattern guard blocks credentials in write and stage modes")
+// benign notes must NOT false-positive
+for (const benign of [
+  "imsOrgId 85786B32608127A10A495FB3@AdobeOrg and api key splash-standalone-1",
+  "placeholder postgres://user:<password>@localhost:5432/db",
+]) {
+  out = await note.execute({ file: "40-notes.md", note: benign }, { cwd: projA })
+  assert.match(out.content, /recorded in 40-notes\.md/, `false positive on: ${benign}`)
+}
+console.log("PASS 21: secret-pattern guard blocks credentials in write/stage modes without false positives")
 
 // 22. near-duplicate warning flags rephrased bullets in the same file without blocking genuine additions
 out = await note.execute(
