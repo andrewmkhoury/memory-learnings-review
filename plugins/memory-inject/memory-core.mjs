@@ -136,6 +136,54 @@ export function resolveScopeDir({ cfg, directory, isGlobal = false, isOpenChambe
   return { home }
 }
 
+const SECRET_PATTERNS = [
+  { label: "GitHub token", re: /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}\b/ },
+  { label: "API key (sk-)", re: /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{20,}\b/ },
+  { label: "AWS access key", re: /\bAKIA[0-9A-Z]{16}\b/ },
+  { label: "Slack token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { label: "Bearer token", re: /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/ },
+  { label: "private key", re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/ },
+]
+
+export function detectSecret(text) {
+  for (const { label, re } of SECRET_PATTERNS) {
+    if (re.test(text)) return label
+  }
+  return undefined
+}
+
+const STOP_WORDS = new Set([
+  "this", "that", "with", "from", "have", "were", "been", "when", "what", "into",
+  "only", "also", "more", "than", "then", "them", "they", "their", "your", "about",
+  "should", "would", "could", "always", "never", "using", "before", "after",
+])
+
+function contentTokens(text) {
+  const tokens = text.toLowerCase().match(/[a-z0-9_-]{4,}/g) ?? []
+  return new Set(tokens.filter((t) => !STOP_WORDS.has(t)))
+}
+
+function findNearDuplicateLine(body, note) {
+  const noteTokens = contentTokens(note)
+  if (noteTokens.size < 4) return undefined
+  const lines = body.split("\n")
+  let best = undefined
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*-\s+(.*)$/)
+    if (!m) continue
+    const existingTokens = contentTokens(m[1])
+    if (existingTokens.size < 4) continue
+    let inter = 0
+    for (const t of noteTokens) if (existingTokens.has(t)) inter++
+    const union = noteTokens.size + existingTokens.size - inter
+    const sim = union > 0 ? inter / union : 0
+    if (sim >= 0.65 && (!best || sim > best.sim)) {
+      best = { line: i + 1, sim }
+    }
+  }
+  return best?.line
+}
+
 export function validateTopicFilename(file) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*\.md$/.test(file))
     return "error: file must be a plain basename like 40-topic-name.md"
@@ -150,6 +198,8 @@ export function validateNote(file, note) {
   if (!note) return "error: note is required"
   if (note.length > 500)
     return "error: note too long (max 500 chars) — keep it to one tight bullet"
+  const secret = detectSecret(note)
+  if (secret) return `error: note appears to contain a secret (${secret}) — remove credentials before saving`
   return undefined
 }
 
@@ -162,6 +212,8 @@ export function stageNote({ cfg, directory, note, file, isGlobal = false, isOpen
   if (!note) return { content: "error: note is required" }
   if (note.length > 500)
     return { content: "error: note too long (max 500 chars) — keep it to one tight bullet" }
+  const secret = detectSecret(note)
+  if (secret) return { content: `error: note appears to contain a secret (${secret}) — remove credentials before saving` }
   if (file) {
     const fileErr = validateTopicFilename(file)
     if (fileErr) return { content: fileErr }
@@ -231,11 +283,13 @@ export function writeNote({
 
   const line = `- ${note}`
   const changed = []
+  let nearDupLine = undefined
   for (const t of targets) {
     const exists = existsSync(t)
     if (!exists && t !== primary) continue // only the session's own dir may gain a new file
     let body = exists ? readFileSync(t, "utf8") : ""
     if (body.includes(line)) continue // idempotent
+    if (t === primary && body) nearDupLine = findNearDuplicateLine(body, note)
     if (body && !body.endsWith("\n")) body += "\n"
     writeFileSync(t, body + line + "\n")
     changed.push(t)
@@ -246,6 +300,9 @@ export function writeNote({
     changed.length > 1
       ? `recorded in ${path.basename(primary)} (all configured projects)`
       : `recorded in ${path.basename(primary)}`
+  if (nearDupLine !== undefined) {
+    out += `; warning: similar to existing bullet on line ${nearDupLine} — consider merging`
+  }
 
   if (createdPrimary) {
     const idx = readFileSync(idxPath, "utf8")

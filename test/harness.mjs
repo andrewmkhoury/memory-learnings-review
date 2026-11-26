@@ -289,4 +289,33 @@ assert.match(out.content, /recorded in 40-override\.md/)
 assert.equal(readFileSync(path.join(memA, "40-override.md"), "utf8"), "- targeted via directory override\n")
 console.log("PASS 20: ephemeral chat dir blocked for project writes; explicit directory override works")
 
-console.log(`\nall 20 tests passed (sandbox: ${HOME})`)
+// 21. deterministic secret guard blocks credentials in both write and stage modes
+for (const secretNote of [
+  "use token ghp_1234567890abcdefghij1234567890abcd for CI",
+  "set key sk-ant-api03-1234567890abcdefghij12345",
+  "aws key AKIAIOSFODNN7EXAMPLE in env",
+  "slack xoxb-1234567890-abcdefg",
+  "header Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+  "key -----BEGIN RSA PRIVATE KEY-----",
+]) {
+  out = await note.execute({ file: "40-notes.md", note: secretNote }, { cwd: projA })
+  assert.match(out.content, /appears to contain a secret/, `should block: ${secretNote}`)
+}
+out = await note.execute({ file: "40-notes.md", note: "token ghp_1234567890abcdefghij1234567890abcd", stage: true }, { cwd: projA })
+assert.match(out.content, /appears to contain a secret/, "staging must also block secrets")
+console.log("PASS 21: secret-pattern guard blocks credentials in write and stage modes")
+
+// 22. near-duplicate warning flags rephrased bullets in the same file without blocking genuine additions
+out = await note.execute(
+  { file: "45-dedup.md", note: "Restart webpack server after changing environment variables locally" },
+  { cwd: projA },
+)
+assert.equal(out.content.includes("warning:"), false)
+out = await note.execute(
+  { file: "45-dedup.md", note: "Restart webpack server locally after changing environment variables" },
+  { cwd: projA },
+)
+assert.match(out.content, /recorded in 45-dedup\.md; warning: similar to existing bullet on line 1/)
+console.log("PASS 22: near-duplicate warning flags rephrased bullets")
+
+console.log(`\nall 22 tests passed (sandbox: ${HOME})`)
