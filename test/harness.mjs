@@ -280,4 +280,13 @@ assert.equal(event6.prompt.files, undefined, "injectIndex: false must attach not
 writeFileSync(process.env.MEMORY_INJECT_CONFIG, JSON.stringify(cfgGuard))
 console.log("PASS 19: maxIndexBytes compacts oversized MEMORY.md; injectIndex: false skips turn-1 attach")
 
-console.log(`\nall 19 tests passed (sandbox: ${HOME})`)
+// 20. ephemeral OpenChamber chat dir is rejected for project writes; explicit directory overrides it
+const ephemeralDir = path.join(HOME, ".config", "openchamber", "chats", "2026-11-25", "session-abc123")
+out = await note.execute({ file: "40-notes.md", note: "should not land in ephemeral chat" }, { cwd: ephemeralDir })
+assert.match(out.content, /ephemeral chat folder/)
+out = await note.execute({ directory: projA, file: "40-override.md", note: "targeted via directory override" }, { cwd: ephemeralDir })
+assert.match(out.content, /recorded in 40-override\.md/)
+assert.equal(readFileSync(path.join(memA, "40-override.md"), "utf8"), "- targeted via directory override\n")
+console.log("PASS 20: ephemeral chat dir blocked for project writes; explicit directory override works")
+
+console.log(`\nall 20 tests passed (sandbox: ${HOME})`)

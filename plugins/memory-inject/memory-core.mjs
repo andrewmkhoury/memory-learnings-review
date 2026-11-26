@@ -19,6 +19,12 @@ export function slugFor(directory) {
   return directory.replace(/\//g, "-")
 }
 
+/** Detect ephemeral OpenChamber standalone chat folders that no future session will revisit. */
+export function isEphemeralSessionDir(directory) {
+  if (!directory) return false
+  return /\/openchamber\/chats\/[^/]+\/session-[^/]+(?:\/|$)/.test(directory)
+}
+
 /** @returns {{memoryDirs: Array<{prefix:string,dir:string}>, baseDir?: string, globalDir?: string, openchamberDir?: string, injectIndex: boolean, maxIndexBytes: number}} */
 export function loadConfig(cfgPath) {
   const defaults = {
@@ -118,7 +124,14 @@ export function resolveScopeDir({ cfg, directory, isGlobal = false, isOpenChambe
       return { error: "error: global store not configured (set globalDir in the plugin config)" }
     return { home: { prefix: "", dir: cfg.globalDir } }
   }
-  const home = matchDir(directory, cfg)
+  const normalized = directory ? expand(directory) : undefined
+  if (isEphemeralSessionDir(normalized)) {
+    return {
+      error:
+        "error: session directory is an ephemeral chat folder — pass 'directory' pointing to the actual project repo (or use global: true / openchamber: true)",
+    }
+  }
+  const home = matchDir(normalized, cfg)
   if (!home) return { error: "error: no memory directory mapped for this session's directory" }
   return { home }
 }
@@ -274,7 +287,8 @@ export function readStoreFile(dir, file) {
 
 function collectScopes({ cfg, directory, includeOpenChamber = false }) {
   const scopes = []
-  const project = matchDir(directory, cfg)
+  const normalized = directory ? expand(directory) : undefined
+  const project = !isEphemeralSessionDir(normalized) ? matchDir(normalized, cfg) : undefined
   if (project && existsSync(project.dir)) scopes.push({ scope: "project", dir: project.dir })
   if (cfg.globalDir && existsSync(cfg.globalDir)) scopes.push({ scope: "global", dir: cfg.globalDir })
   if (includeOpenChamber && cfg.openchamberDir && existsSync(cfg.openchamberDir))

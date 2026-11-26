@@ -3,6 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import {
   clearStaging,
+  expand,
   loadConfig,
   matchDir,
   prepareIndexForInjection,
@@ -86,15 +87,21 @@ export default {
       tools.add({
         name: "memory_note",
         description:
-          "Record a durable memory (lesson, preference, pitfall, decision) in this project's memory files. " +
+          "Record a durable memory (lesson, preference, pitfall, decision) in a project's memory files. " +
           "Appends one bullet to the topic file — and to other configured project dirs when the same file " +
-          "exists there — and adds a MEMORY.md index line for new files. Set global: true to write to the " +
-          "cross-project global store, openchamber: true for the OpenChamber-only store, or stage: true to " +
-          "park an unreviewed candidate in _staging.md mid-session for later curation.",
+          "exists there — and adds a MEMORY.md index line for new files. Pass directory when writing from " +
+          "an ephemeral chat session to target a specific repo. Set global: true for cross-project rules, " +
+          "openchamber: true ONLY for OpenChamber-tool-specific rules (never project or general rules), or " +
+          "stage: true to park an unreviewed candidate in _staging.md mid-session.",
         options: { codemode: false },
         input: {
           type: "object",
           properties: {
+            directory: {
+              type: "string",
+              description:
+                "Optional project/repo path override (required when running from an ephemeral OpenChamber chat folder)",
+            },
             file: {
               type: "string",
               description: "Topic file basename, e.g. '30-project-context.md', or a new 'NN-<name>.md'",
@@ -108,7 +115,7 @@ export default {
             openchamber: {
               type: "boolean",
               description:
-                "Write to the OpenChamber store instead of this project's store (only injected into OpenChamber sessions)",
+                "Write to the OpenChamber store (ONLY for OpenChamber-specific tool/UI/scheduling rules — never project or general rules)",
             },
             stage: {
               type: "boolean",
@@ -121,7 +128,8 @@ export default {
         },
         async execute(input: any, context: any) {
           try {
-            const directory = await resolveDirectory(ctx, context)
+            const explicitDir = String(input?.directory ?? "").trim()
+            const directory = explicitDir ? expand(explicitDir) : await resolveDirectory(ctx, context)
             const cfg = loadConfig(configFilePath())
             return writeNote({
               cfg,
@@ -144,12 +152,16 @@ export default {
         description:
           "Inspect or search memory across project, global, and (in OpenChamber) OpenChamber stores. " +
           "Omit query and file to list all topic files with bullet counts, orphan/bloat flags, and pending " +
-          "_staging.md candidates. Pass query to search lines, file to read one topic file, or clearStaging: true " +
-          "to clear _staging.md after curating it.",
+          "_staging.md candidates. Pass directory to inspect a specific repo from an ephemeral chat session, " +
+          "query to search lines, file to read one topic file, or clearStaging: true to clear _staging.md.",
         options: { codemode: false },
         input: {
           type: "object",
           properties: {
+            directory: {
+              type: "string",
+              description: "Optional project/repo path override",
+            },
             query: { type: "string", description: "Case-insensitive keyword to search across topic files" },
             file: {
               type: "string",
@@ -166,7 +178,8 @@ export default {
         },
         async execute(input: any, context: any) {
           try {
-            const directory = await resolveDirectory(ctx, context)
+            const explicitDir = String(input?.directory ?? "").trim()
+            const directory = explicitDir ? expand(explicitDir) : await resolveDirectory(ctx, context)
             const cfg = loadConfig(configFilePath())
             const isGlobal = input?.global === true
             const isOC = input?.openchamber === true

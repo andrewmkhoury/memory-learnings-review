@@ -46,14 +46,15 @@ If an existing entry already says it, skip. If an entry is close but missing the
 
 Before writing a memory bullet, check whether the lesson actually belongs somewhere stronger than memory:
 - **Skill / instruction / script / lint rule**: if a recurring pitfall is caused by an outdated skill, missing script check, or broken instruction, propose editing that file directly (and ask before modifying it) rather than piling up another memory bullet.
-- **Project memory** (default `memory_note`): repo, service, architecture, or tooling facts specific to this project (`30-<project>-context.md` or a focused `40-<topic>.md`).
+- **Project memory** (default `memory_note`): repo, service, architecture, or tooling facts specific to this project (`30-<project>-context.md` or a focused `40-<topic>.md`). If running from an ephemeral standalone chat folder (e.g. `~/.config/openchamber/chats/.../session-*`), pass `directory` pointing to the actual repo the work belongs to.
 - **Global memory** (`memory_note` with `global: true`): cross-project rules that apply everywhere:
   - Execution and verification rules: `10-general-execution-rules.md`
   - Test-writing rules: `11-tdd-default-workflow.md`
   - Debugging method and gotchas: `12-debugging-and-validation-ladder.md`
   - Operating on live systems or the user's environment: `13-safe-live-operations.md`
   - Communication: `14-communication-and-reporting.md`
-- **OpenChamber memory** (`memory_note` with `openchamber: true`): rules that reference OpenChamber-specific tools (sessions, schedules, knowledge panel) and should not leak into plain OpenCode, Cursor, or Copilot.
+  If `global: true` returns "global store not configured", tell the user and ask where they want cross-project rules stored (e.g. `AGENTS.md` or configuring `globalDir`) — **never** silently reroute them into `openchamber: true` or a project store.
+- **OpenChamber memory** (`memory_note` with `openchamber: true`): **strictly** for rules that reference OpenChamber-specific tools (sessions, schedules, knowledge panel, `openchamber_render`). Never put project-specific notes or general engineering rules here, because `openchamberDir` is injected into every OpenChamber chat.
 
 Write each memory entry with `memory_note`: one tight bullet, at most 500 characters, imperative, naming the ticket or PR as evidence. Call it once per entry, and never write to the same file in parallel calls.
 
