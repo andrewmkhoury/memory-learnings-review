@@ -1,6 +1,6 @@
 ---
 name: memory-learnings-review
-description: Reviews what was found and learned in the current session (bugs, wrong assumptions, user corrections, wasted time, surprising facts) and curates them into the right destination (project/global/openchamber memory, or a skill/rule/script update), rejecting noise. Also runs compaction/pruning passes to merge duplicates and remove stale entries. Use when the user asks to save learnings, update memory, do a retrospective, "what should we remember", "compact memory", "prune memory", or after a long debugging or review session.
+description: Curate session learnings into memory or skills (rejecting noise) and compact/prune memory stores ("save learnings", "update memory", "compact memory").
 ---
 
 # Memory Learnings Review
