@@ -8,3 +8,4 @@
 - Ship only proven fixes: A/B each change in the real environment by reverting it alone and watching the symptom return, and drop or flag anything without that evidence. Audit the final diff hunk by hunk against the evidence before pushing. Unproven extras are excess change.
 - Env-driven booleans and numbers arrive as strings: parse explicitly or "false" is truthy and silently keeps a feature on. Check every env-mapped flag when adding config.
 - Before filing a ticket/issue for a bug, search the tracker for existing ones (same component, recent, summary keywords) and show the candidates — a duplicate filed in haste costs more than the search.
+- Offload high-output work (broad repo exploration, log/search sweeps, multi-file research, independent diff review) to a subagent that returns only a concise summary + file paths, keeping the main session context slim; keep small 1–2 file lookups direct.
