@@ -45,7 +45,10 @@ If an existing entry already says it, skip. If an entry is close but missing the
 ### 4. Route to the right destination and write
 
 Before writing a memory bullet, check whether the lesson actually belongs somewhere stronger than memory:
-- **Skill / instruction / script / lint rule**: if a recurring pitfall is caused by an outdated skill, missing script check, or broken instruction, propose editing that file directly (and ask before modifying it) rather than piling up another memory bullet.
+- **Skill (create or update)**: prefer a skill over a memory bullet whenever the learning is a repeatable multi-step workflow, a tool/API playbook with commands or flags, or a fix to an existing skill that failed or drifted.
+  - If an existing skill already covers the topic, update that skill directly (or propose the exact diff if risky) instead of adding a memory bullet.
+  - If it's a new repeatable workflow that doesn't fit an existing skill, create a minimal `~/.claude/skills/<name>/SKILL.md` (with tight frontmatter description + steps) instead of cramming a procedure into a 500-char bullet — keep it lean, and don't also duplicate it in memory.
+- **Instruction / script / lint rule**: if a recurring pitfall is caused by a missing script check or broken project instruction, propose editing that file directly rather than piling up another memory bullet.
 - **Project memory** (default `memory_note`): repo, service, architecture, or tooling facts specific to this project (`30-<project>-context.md` or a focused `40-<topic>.md`). If running from an ephemeral standalone chat folder (e.g. `~/.config/openchamber/chats/.../session-*`), pass `directory` pointing to the actual repo the work belongs to.
 - **Global memory** (`memory_note` with `global: true`): cross-project rules that apply everywhere:
   - Execution and verification rules: `10-general-execution-rules.md`
@@ -77,7 +80,7 @@ Run this periodically or when `memory_search` flags a file as `large` or `uninde
 3. Identify:
    - Duplicate or near-duplicate bullets within or across files that can be merged into one sharper rule.
    - Stale or superseded facts (e.g. resolved workarounds, deleted branches/tools, old dates).
-   - Bullets that belong in a skill, linter, or project config instead of memory.
+   - Bullets that belong in a skill, linter, or project config instead of memory (e.g. 3+ bullets describing one repeatable workflow should be promoted into a skill and removed from memory).
    - Orphan topic files missing from `MEMORY.md`, or broken links in `MEMORY.md`.
 4. Present a concise summary of proposed merges, deletions, and index fixes, and **wait for the user's approval** before editing or deleting any existing entries.
 
